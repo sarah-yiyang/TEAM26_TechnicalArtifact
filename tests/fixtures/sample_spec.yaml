@@ -1,0 +1,92 @@
+# =====================================================================
+# Recipe for data/sample_30rows.xlsx  (built by scripts/build_sample.py)
+# ---------------------------------------------------------------------
+# Each sample row is one REAL row of the full export, picked because it
+# already shows a messy case. `excel_row` is the row number you see in
+# Excel (header = row 1). `edit` lists hand changes, by standard field
+# name. Rows with comments that name a person were not picked.
+# =====================================================================
+
+source_file: BuildFest_EveryMind_Survey_Data_FULL.xlsx
+output_file: data/sample_30rows.xlsx
+sheet_name: Survey Data
+
+# Position (0-based) of each field in the raw export. Used only by the
+# build script and the M0 sample-coverage test; the pipeline itself
+# matches columns by name through config/schema.yaml.
+columns:
+  response_id: 0
+  start_time: 1
+  end_time: 2
+  language: 3
+  role_raw: 4
+  training_date: 5
+  county: 6
+  post_identify: 7
+  post_describe: 8
+  post_when: 9
+  pre_identify: 10
+  pre_describe: 11
+  pre_when: 12
+  presenter_engaged: 13
+  presenter_knew: 14
+  well_organized: 15
+  nps: 16
+  likely_call: 17
+  comment_valuable: 18
+  comment_improve: 19
+
+rows:
+  - {excel_row: 4,    covers: "normal row; praise comment"}
+  - {excel_row: 127,  covers: "HAND-EDITED unknown answer value", edit: {post_describe: "Somewhat agree"}}
+  - {excel_row: 128,  covers: "Very agree (well_organized)"}
+  - {excel_row: 130,  covers: "Satisfied (presenter_knew) + 2x Very agree"}
+  - {excel_row: 27,   covers: "Neither agree OR disagree (well_organized)"}
+  - {excel_row: 63,   covers: "missing training date; standard 'Neither agree nor disagree'"}
+  - {excel_row: 36,   covers: "multi-role Other;Caregiver; + county 'Montgomery\\xa0'"}
+  - {excel_row: 22,   covers: "multi-role School staff;Caregiver; + county 'Fairfax '"}
+  - {excel_row: 211,  covers: "multi-role Caregiver;Student -> role_primary Student; 3x Satisfied"}
+  - {excel_row: 1031, covers: "blank presenter block (Oct 2026 form)"}
+  - {excel_row: 133,  covers: "blank presenter block + blank nps + blank likely_call"}
+  - {excel_row: 233,  covers: "'nothing' comment"}
+  - {excel_row: 262,  covers: "question comment"}
+  - {excel_row: 1028, covers: "open question without '?'; likely_call 9"}
+  - {excel_row: 32,   covers: "county variant 'Montgomery County with NAMI MC'"}
+  - {excel_row: 24,   covers: "county variant 'Fairfax county '"}
+  - {excel_row: 60,   covers: "county 'Harris' (other / unclear)"}
+  - {excel_row: 196,  covers: "county variant \"Queen Anne's County \"; Spanish"}
+  - {excel_row: 861,  covers: "speeder (18 s)"}
+  - {excel_row: 15,   covers: "straight-liner (all 9 = Strongly agree)"}
+  - {excel_row: 8,    covers: "reversed (post all Strongly disagree, nps 10)"}
+  - {excel_row: 34,   covers: "Spanish language"}
+  - {excel_row: 1030, covers: "knows when (post_when 5) but likely_call 6"}
+  - {excel_row: 1027, covers: "declined (pre_identify 4 -> post 3); question comment"}
+  - {excel_row: 148,  covers: "blank nps, likely_call 10"}
+  - {excel_row: 5,    covers: "HAND-EDITED Id reused (same Id as sample row 1, different start time): NOT a duplicate", edit: {response_id: 3}}
+  - {excel_row: 115,  covers: "duplicate - original ('none' comment)"}
+  - {excel_row: 115,  covers: "HAND-ADDED exact duplicate of sample row 27"}
+  - {excel_row: 423,  covers: "normal May 2026 student"}
+  - {excel_row: 665,  covers: "normal Sep 2026 student; confidentiality question"}
+
+# What the M0 coverage test expects to find in the built file.
+# Value counts use cleaned text (lowercase, trimmed, \xa0 -> space).
+expected:
+  rows: 30
+  columns: 20
+  exact_duplicate_rows: 1
+  reused_id_rows: 1            # same Id, different start_time
+  likert_value_counts:         # across all 9 Likert columns
+    "very agree": 3
+    "satisfied": 4
+    "neither agree or disagree": 1
+    "somewhat agree": 1
+  min_likert_cells_with_nbsp: 1
+  min_county_cells_with_nbsp: 1
+  multi_role_rows: 3
+  missing_training_date: 1
+  blank_likely_call_min: 1
+  speeders: 1                  # end - start < quality.speeder_seconds
+  blank_presenter_block: 5     # rows 10, 11, 14, 23, 24
+  nothing_comments: 1          # comment_improve == "nothing"
+  question_comments_min: 1     # comment_improve contains "?"
+  spanish_rows: 2              # rows 18, 22

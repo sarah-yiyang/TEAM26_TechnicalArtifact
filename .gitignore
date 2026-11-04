@@ -2,6 +2,11 @@
 BuildFest_EveryMind_Survey_Data_FULL.xlsx
 *.xlsx
 *.csv
+# ...except the hand-checked test sample
+!data/sample_30rows.xlsx
+
+# secrets (Anthropic key for st.secrets)
+.streamlit/secrets.toml
 
 # claude
 CLAUDE.md
