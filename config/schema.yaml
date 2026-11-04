@@ -7,10 +7,16 @@
 #
 # How matching works (implemented in pipeline/mapping.py):
 #   1. Every column name is normalized first (see `normalization`).
-#   2. A column matches a field when it contains ALL `all_of` phrases
-#      and NONE of the `none_of` phrases.
+#   2. A column matches a field when it passes ALL of these keyword rules:
+#        all_of:  contains EVERY phrase listed
+#        any_of:  contains AT LEAST ONE phrase listed (if given)
+#        none_of: contains NONE of the phrases listed (if given)
+#        exact:   if true, the whole normalized name must equal the
+#                 single `all_of` phrase (e.g. "id"), not just contain it
 #   3. If no field matches, fuzzy matching against `example` is tried
-#      (score >= matching.fuzzy_threshold).
+#      (score >= matching.fuzzy_threshold). Fuzzy candidates must still
+#      pass `any_of` / `none_of`, so a renamed "before" question can
+#      never be matched to an "after" field (or vice versa).
 #   4. Each column may match only one field. Ties or no match are
 #      reported as "unrecognized", never guessed.
 # =====================================================================
@@ -243,6 +249,13 @@ role_values:
   "caregiver/parent": "caregiver"
   "other (e.g., community member)": "community"
 
+# How each role code is shown in the app and summaries.
+role_labels:
+  student: "Student"
+  school_staff: "School staff"
+  caregiver: "Caregiver"
+  community: "Community"
+
 # When someone picks several roles, role_primary uses the first match
 # in this order. ASSUMPTION: being a student shapes the training
 # experience most, since sessions are school-based.
@@ -287,7 +300,9 @@ quality:
 # Analysis settings (pipeline/metrics.py, pipeline/segments.py)
 # ---------------------------------------------------------------------
 analysis:
-  min_n: 20                          # smaller groups are suppressed
+  min_n: 20                          # smaller groups are suppressed.
+                                     # SINGLE SOURCE: pipeline/__init__.py loads
+                                     # MIN_N from here; do not hardcode it there.
   agree_threshold: 4                 # likert >= 4 counts as "agree"
   likely_call_high: 9                # 9-10 counts as "very likely to call"
   nps_promoter_min: 9
@@ -297,8 +312,9 @@ analysis:
     identify: [pre_identify, post_identify]
     describe: [pre_describe, post_describe]
     when:     [pre_when, post_when]
-  group_by_options:
+  group_by_options:                  # standard column names (see CLAUDE.md)
     - role_primary
     - county
     - language
-    - training_month
+    - month
+    - session_id                     # date_county; used by the session funnel

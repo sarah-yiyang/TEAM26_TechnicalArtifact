@@ -29,6 +29,9 @@ Question: How can EveryMind use its 988 training feedback data to develop an act
   * know it vs. would use it chart
 * ok so i center around my artifact to the pipeline but i also need efforts on making key insights. 
 
+## business suggestions
+* should include explanation in title in survey that "this info is used for improvements only not assessing ur personal preference..."
+
 idea
 * 1 feature to see trend of demographics
 * 1 feature to summarize people's most valuable part: so where to keep in the training
