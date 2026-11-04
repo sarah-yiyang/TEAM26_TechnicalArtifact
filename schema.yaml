@@ -1,0 +1,304 @@
+# =====================================================================
+# EveryMind 988 Training Survey - Schema Configuration
+# ---------------------------------------------------------------------
+# This is the ONLY file that knows the original survey wording.
+# If EveryMind rewords, adds, or removes a question, edit this file,
+# not the code.
+#
+# How matching works (implemented in pipeline/mapping.py):
+#   1. Every column name is normalized first (see `normalization`).
+#   2. A column matches a field when it contains ALL `all_of` phrases
+#      and NONE of the `none_of` phrases.
+#   3. If no field matches, fuzzy matching against `example` is tried
+#      (score >= matching.fuzzy_threshold).
+#   4. Each column may match only one field. Ties or no match are
+#      reported as "unrecognized", never guessed.
+# =====================================================================
+
+version: 1
+
+# ---------------------------------------------------------------------
+# Text cleanup applied to column names AND answer values before any
+# matching or translation.
+# ---------------------------------------------------------------------
+normalization:
+  lowercase: true
+  strip: true
+  collapse_whitespace: true          # "training.  .i" -> "training. .i"
+  replace_chars:
+    "\u00a0": " "                    # non-breaking space (found in this data)
+    "\u2019": "'"                    # curly apostrophe -> straight
+    "\u2018": "'"
+  remove_chars:
+    - "\u200e"                       # left-to-right mark (found in Language)
+    - "\u200f"                       # right-to-left mark
+    - "\u200b"                       # zero-width space
+    - "\ufeff"                       # byte-order mark
+
+matching:
+  fuzzy_threshold: 85                # 0-100; used only when keyword rules fail
+
+# ---------------------------------------------------------------------
+# Standard fields. Keys are the canonical column names used by every
+# module after mapping.
+#   type: id | datetime | date | category | multiselect | likert | scale_0_10 | text
+#   required: true  -> app stops with a clear message if missing
+#   required: false -> app shows "not collected" for dependent metrics
+# ---------------------------------------------------------------------
+fields:
+
+  # ----- Response metadata -----
+  response_id:
+    type: id
+    required: true
+    all_of: ["id"]
+    exact: true                      # whole normalized name must equal "id"
+    example: "Id"
+
+  start_time:
+    type: datetime
+    required: true
+    all_of: ["start time"]
+    example: "Start time"
+
+  end_time:
+    type: datetime
+    required: false
+    all_of: ["completion time"]
+    example: "Completion time"
+
+  language:
+    type: category
+    required: false
+    all_of: ["language"]
+    example: "Language"
+    translate: language_values
+
+  role_raw:
+    type: multiselect
+    required: false
+    all_of: ["are you a"]
+    example: "Are you a....?"
+    separator: ";"
+    translate: role_values
+
+  training_date:
+    type: date
+    required: false
+    all_of: ["date", "training"]
+    example: "Please enter the date of your training."
+
+  county:
+    type: category
+    required: false
+    all_of: ["county"]
+    example: "Which county is this training affiliated with?"
+    translate: county_values
+
+  # ----- Knowledge: AFTER training -----
+  post_identify:
+    type: likert
+    required: false
+    all_of: ["identify", "mental health"]
+    none_of: ["think back", "before"]
+    example: "Please tell us how much you disagree or agree with the statements..I can identify mental health challenges and crises."
+    translate: likert_values
+
+  post_describe:
+    type: likert
+    required: false
+    all_of: ["describe 988"]
+    none_of: ["think back", "before"]
+    example: "Please tell us how much you disagree or agree with the statements..I can describe 988 and how it works."
+    translate: likert_values
+
+  post_when:
+    type: likert
+    required: false
+    all_of: ["when to use 988"]
+    none_of: ["think back", "before"]
+    example: "Please tell us how much you disagree or agree with the statements..I know when to use 988."
+    translate: likert_values
+
+  # ----- Knowledge: BEFORE training (retrospective, asked after) -----
+  pre_identify:
+    type: likert
+    required: false
+    all_of: ["identify", "mental health"]
+    any_of: ["think back", "before"]
+    example: "Now think back to before you took part in the Understanding 988 training..I could identify mental health challenges and crises."
+    translate: likert_values
+
+  pre_describe:
+    type: likert
+    required: false
+    all_of: ["describe 988"]
+    any_of: ["think back", "before"]
+    example: "Now think back to before you took part in the Understanding 988 training..I could describe 988 and how it works."
+    translate: likert_values
+
+  pre_when:
+    type: likert
+    required: false
+    all_of: ["when to use 988"]
+    any_of: ["think back", "before"]
+    example: "Now think back to before you took part in the Understanding 988 training..I knew when to use 988."
+    translate: likert_values
+
+  # ----- Training feedback -----
+  presenter_engaged:
+    type: likert
+    required: false
+    all_of: ["presenter", "engaged"]
+    example: "How much do you agree or disagree with the following aspects of the training?.The presenter(s) engaged the participants."
+    translate: likert_values
+
+  presenter_knew:
+    type: likert
+    required: false
+    all_of: ["presenter", "subject matter"]
+    example: "How much do you agree or disagree with the following aspects of the training?.The presenter(s) knew the subject matter well."
+    translate: likert_values
+
+  well_organized:
+    type: likert
+    required: false
+    all_of: ["well organized"]
+    example: "How much do you agree or disagree with the following aspects of the training?.The training was well organized."
+    translate: likert_values
+
+  # ----- Outcomes -----
+  nps:
+    type: scale_0_10
+    required: false
+    all_of: ["likely", "recommend"]
+    example: "How likely are you to recommend the Understanding 988 training to a friend or colleague?"
+
+  likely_call:
+    type: scale_0_10
+    required: false
+    all_of: ["likely", "call 988"]
+    example: "How likely are you to call 988 if you or someone else is experiencing a mental health challenge or crisis?"
+
+  # ----- Open-ended comments -----
+  comment_valuable:
+    type: text
+    required: false
+    all_of: ["most valuable"]
+    example: "What was the most valuable thing you learned during the training?"
+
+  comment_improve:
+    type: text
+    required: false
+    all_of: ["improve"]
+    example: "How can we improve this training in the future?"
+
+# ---------------------------------------------------------------------
+# Answer translations. Keys are NORMALIZED values (after the cleanup
+# above). Any value not listed goes to the "unrecognized values" list
+# for staff review. It is never guessed.
+# ---------------------------------------------------------------------
+likert_values:
+  "strongly disagree": 1
+  "disagree": 2
+  "neither agree nor disagree": 3
+  "neither agree or disagree": 3     # wording variant in feedback items
+  "agree": 4
+  "strongly agree": 5
+  # --- Judgment calls (counted and reported in the cleaning log) ---
+  "very agree": 5                    # ASSUMPTION: same as strongly agree
+  "satisfied": 4                     # ASSUMPTION: off-scale label, treated as agree
+
+ambiguous_values:                    # cleaning log reports how many rows used these
+  - "very agree"
+  - "satisfied"
+
+language_values:
+  "english (united states)": "English"
+  "español (méxico)": "Spanish"
+  "espanol (mexico)": "Spanish"      # in case accents are stripped in a future export
+
+county_values:
+  "anne arundel": "Anne Arundel"
+  "anne arundel county": "Anne Arundel"
+  "prince george's": "Prince George's"
+  "prince george's county": "Prince George's"
+  "prince georges": "Prince George's"
+  "montgomery": "Montgomery"
+  "montgomery county": "Montgomery"
+  "montgomery county with nami mc": "Montgomery"   # partner noted; county kept
+  "queen anne's": "Queen Anne's"
+  "queen anne's county": "Queen Anne's"
+  "fairfax": "Fairfax (VA)"
+  "fairfax county": "Fairfax (VA)"
+  "harris": "Other / unclear"        # no Maryland county by this name
+
+out_of_area_counties:                # shown separately from Maryland results
+  - "Fairfax (VA)"
+  - "Other / unclear"
+
+role_values:
+  "student": "student"
+  "school staff member": "school_staff"
+  "caregiver/parent": "caregiver"
+  "other (e.g., community member)": "community"
+
+# When someone picks several roles, role_primary uses the first match
+# in this order. ASSUMPTION: being a student shapes the training
+# experience most, since sessions are school-based.
+role_priority:
+  - student
+  - school_staff
+  - caregiver
+  - community
+
+# ---------------------------------------------------------------------
+# Duplicate handling (pipeline/ingest.py)
+# ID alone is not safe: a new Microsoft Form restarts IDs at 1.
+# ---------------------------------------------------------------------
+dedupe_keys:
+  - response_id
+  - start_time
+
+# ---------------------------------------------------------------------
+# Data-quality flags (pipeline/quality.py). Flags never delete rows.
+# ---------------------------------------------------------------------
+quality:
+  speeder_seconds: 20                # median completion here is ~47s
+  straightline_fields:               # same answer on ALL of these -> flag
+    - pre_identify
+    - pre_describe
+    - pre_when
+    - post_identify
+    - post_describe
+    - post_when
+    - presenter_engaged
+    - presenter_knew
+    - well_organized
+  reversed_scale:                    # likely misread the scale
+    post_fields_all_at_most: 1       # strongly disagree on every post item...
+    post_fields:
+      - post_identify
+      - post_describe
+      - post_when
+    nps_at_least: 8                  # ...but would recommend the training
+
+# ---------------------------------------------------------------------
+# Analysis settings (pipeline/metrics.py, pipeline/segments.py)
+# ---------------------------------------------------------------------
+analysis:
+  min_n: 20                          # smaller groups are suppressed
+  agree_threshold: 4                 # likert >= 4 counts as "agree"
+  likely_call_high: 9                # 9-10 counts as "very likely to call"
+  nps_promoter_min: 9
+  nps_detractor_max: 6
+  scale_0_10_valid_range: [0, 10]    # values outside go to unrecognized list
+  knowledge_pairs:                   # used for before/after change
+    identify: [pre_identify, post_identify]
+    describe: [pre_describe, post_describe]
+    when:     [pre_when, post_when]
+  group_by_options:
+    - role_primary
+    - county
+    - language
+    - training_month

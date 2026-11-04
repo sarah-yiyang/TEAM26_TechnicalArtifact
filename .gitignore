@@ -1,0 +1,7 @@
+# Dataset (do not commit)
+BuildFest_EveryMind_Survey_Data_FULL.xlsx
+*.xlsx
+*.csv
+
+# claude
+CLAUDE.md
