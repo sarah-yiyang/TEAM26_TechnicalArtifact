@@ -141,7 +141,6 @@ def _placeholder(milestone: int, title: str, text: str, part: str | None = None)
 
 def _show_counts(stats: dict[str, Any]) -> None:
     """Row-count tiles with plain-English captions."""
-    st.subheader("Rows loaded")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Rows read", stats["rows_in"])
     c1.caption("All rows in the uploaded files.")
@@ -155,7 +154,6 @@ def _show_counts(stats: dict[str, Any]) -> None:
 
 def _show_files(stats: dict[str, Any]) -> None:
     """Rows read from each file."""
-    st.subheader("Files")
     files = pd.DataFrame(
         [{"File": name, "Rows read": n} for name, n in stats["files"].items()]
     )
@@ -175,7 +173,6 @@ def _show_health(stats: dict[str, Any]) -> None:
 
 def _show_mapping(mapping: dict[str, Any]) -> None:
     """Which survey questions were found, missing, or not recognized."""
-    st.subheader("Column matching")
     matched, missing, unrec = mapping["matched"], mapping["missing"], mapping["unrecognized"]
     c1, c2, c3 = st.columns(3)
     c1.metric("Questions matched", len(matched))
@@ -198,14 +195,14 @@ def _show_mapping(mapping: dict[str, Any]) -> None:
             f"{len(fuzzy)} question(s) were matched by close wording, not exact keywords. "
             "Please check them in the table below."
         )
-    with st.expander(f"Matched questions ({len(matched)})"):
-        table = pd.DataFrame([
-            {"Standard name": m["field"], "Column in file": m["column"],
-             "How matched": "close wording" if m["method"] == "fuzzy" else "keywords",
-             "Similarity": m["score"]}
-            for m in matched
-        ])
-        st.dataframe(table, hide_index=True, width="stretch")
+    st.markdown(f"#### Matched questions ({len(matched)})")
+    table = pd.DataFrame([
+        {"Standard name": m["field"], "Column in file": m["column"],
+         "How matched": "close wording" if m["method"] == "fuzzy" else "keywords",
+         "Similarity": m["score"]}
+        for m in matched
+    ])
+    st.dataframe(table, hide_index=True, width="stretch")
     if missing:
         st.markdown("**Missing:** " + ", ".join(
             m["field"] + (" (required)" if m["required"] else "") for m in missing))
@@ -219,7 +216,6 @@ def _show_mapping(mapping: dict[str, Any]) -> None:
 
 def _show_cleaning(fix_log: list[dict[str, Any]], unknown: list[dict[str, Any]]) -> None:
     """Fixes made to answers, and answers that were not recognized."""
-    st.subheader("Fixes and unknown values")
     st.markdown("#### Fixes made")
     if fix_log:
         st.dataframe(
@@ -252,6 +248,47 @@ def _show_cleaning(fix_log: list[dict[str, Any]], unknown: list[dict[str, Any]])
         st.success("✓ No unknown values found.")
 
 
+def _show_preview(raw: pd.DataFrame, cleaned: pd.DataFrame | None) -> None:
+    """First rows as exported and, when available, after cleaning."""
+    n = min(PREVIEW_ROWS, len(raw))
+    tabs = st.tabs(["Cleaned", "As exported"] if cleaned is not None else ["As exported"])
+    if cleaned is not None:
+        with tabs[0]:
+            st.caption(f"First {n} of {len(cleaned)} rows after cleaning.")
+            st.dataframe(cleaned.head(PREVIEW_ROWS), width="stretch")
+    with tabs[-1]:
+        st.caption(f"First {n} of {len(raw)} rows, exactly as in the file(s).")
+        st.dataframe(raw.head(PREVIEW_ROWS), width="stretch")
+
+
+def _show_data_check(result: dict[str, Any]) -> None:
+    """Section 1 as collapsible dropdowns; a summary sits in each label.
+
+    A dropdown opens by itself when it holds a problem that stops the analysis.
+    """
+    stats, mapping = result["stats"], result["mapping"]
+    cleaned = result["clean"]
+    n_files = len(stats["files"])
+    with st.expander(f"Files · {n_files} file{'s' if n_files != 1 else ''}"):
+        _show_files(stats)
+    with st.expander(f"Preview · first {min(PREVIEW_ROWS, len(result['raw']))} rows"):
+        _show_preview(result["raw"], cleaned)
+    with st.expander(f"Rows loaded · {stats['rows_in']:,} read, {stats['rows_out']:,} kept"):
+        _show_counts(stats)
+        _show_health(stats)
+    n_q = len(mapping["matched"]) + len(mapping["missing"])
+    blocked = bool(mapping["missing_required"])
+    with st.expander(f"Column matching · {len(mapping['matched'])} of {n_q} questions matched"
+                     + (" · required columns missing" if blocked else ""), expanded=blocked):
+        _show_mapping(mapping)
+    if cleaned is None:
+        return
+    n_fix, n_unknown = len(result["fix_log"]), len(result["unknown"])
+    with st.expander(f"Fixes and unknown values · {n_fix} fix{'es' if n_fix != 1 else ''}, "
+                     f"{n_unknown} unknown value{'s' if n_unknown != 1 else ''}"):
+        _show_cleaning(result["fix_log"], result["unknown"])
+
+
 # ----- M2: flags and headline numbers ---------------------------------
 
 def _fmt(m: dict[str, Any], kind: str = "pct") -> str:
@@ -273,10 +310,20 @@ def _n(m: dict[str, Any]) -> str:
     return f"n = {m['n']:,}"
 
 
-def _show_flags(flags: dict[str, dict[str, int]]) -> bool:
-    """Quality-flag counts and the leave-out toggle. Returns the toggle value."""
-    st.subheader("Rushed or doubtful answers")
+def _flag_toggle(flags: dict[str, dict[str, int]]) -> bool:
+    """The leave-out toggle; kept outside the dropdowns because it changes every number."""
     any_ = flags["flag_any"]
+    exclude = st.toggle(
+        f"Leave out the {any_['flagged']} flagged responses (of {any_['n']:,})",
+        key="exclude_flagged",
+    )
+    st.caption("Flagged rows are never deleted. \"Could not check\" rows are kept. "
+               "See 'Rushed or doubtful answers' below for what was flagged.")
+    return exclude
+
+
+def _show_flags(flags: dict[str, dict[str, int]]) -> None:
+    """Quality-flag counts by check."""
     secs = load_schema()["quality"]["speeder_seconds"]
     rows = [(f"Finished in under {secs} seconds", "flag_speeder"),
             ("Same answer to all 9 rating questions", "flag_straightline"),
@@ -287,17 +334,10 @@ def _show_flags(flags: dict[str, dict[str, int]]) -> bool:
                       for label, c in rows]),
         hide_index=True, width="stretch",
     )
-    exclude = st.toggle(
-        f"Leave out the {any_['flagged']} flagged responses (of {any_['n']:,})",
-        key="exclude_flagged",
-    )
-    st.caption("Flagged rows are never deleted. \"Could not check\" rows are kept.")
-    return exclude
 
 
 def _show_headline(m: dict[str, dict[str, Any]]) -> None:
     """Headline tiles; every number shows its n."""
-    st.subheader("Headline numbers")
     c1, c2, c3, c4, c5 = st.columns(5)
     post, pre = m["agree_pct.post_when"], m["agree_pct.pre_when"]
     c1.metric("Know when to use 988", _fmt(post))
@@ -324,7 +364,6 @@ def _show_headline(m: dict[str, dict[str, Any]]) -> None:
 
 def _show_knowledge(m: dict[str, dict[str, Any]]) -> None:
     """Before/after table for the three knowledge items."""
-    st.subheader("Before and after, by knowledge item")
     st.caption("Self-reported retrospective change.")
     rows = []
     for k, label in KNOWLEDGE_LABELS.items():
@@ -342,7 +381,6 @@ def _show_knowledge(m: dict[str, dict[str, Any]]) -> None:
 
 def _show_know_call(m: dict[str, dict[str, Any]]) -> None:
     """2x2 of knowing when to use 988 vs being very likely to call."""
-    st.subheader("Know when to use 988 vs. likely to call")
     grid, gap = m["know_call_2x2"], m["know_call_gap"]
     if grid.get("value") is None:
         st.info(f"Not shown: {_fmt(grid)}.")
@@ -368,37 +406,56 @@ def _show_know_call(m: dict[str, dict[str, Any]]) -> None:
                 f"({cells['knows_not_calls']} of {gap['n']}).")
 
 
-def _show_gain(m: dict[str, dict[str, Any]]) -> None:
-    """Average change by starting (recalled before) level."""
-    st.subheader("Change by starting level")
-    k = st.selectbox("Knowledge item", list(KNOWLEDGE_LABELS),
-                     format_func=KNOWLEDGE_LABELS.get, key="gain_item")
-    table = m[f"gain_by_baseline.{k}"]
-    if table.get("value") is None:
-        st.info(f"Not shown: {_fmt(table)}.")
-        return
-    levels = sorted(table["value"])
-    cells = [table["value"][lv] for lv in levels]
-    x = [f"Started at {lv}" + (" (top)" if lv == max(levels) else "")
-         + f"<br>n = {c['n']}" + ("<br>too few" if c["value"] is None else "")
-         for lv, c in zip(levels, cells)]
-    y = [c["value"] for c in cells]
-    fig = go.Figure(go.Bar(
-        x=x, y=y, marker_color=BAR_COLOR, marker_cornerradius=4,
-        customdata=[c["n"] for c in cells],
-        hovertemplate="%{x}<br>Average change: %{y:+.2f}<extra></extra>",
-    ))
+CHANGE_GROUPS: list[tuple[str, str, str]] = [
+    ("at_top", "Already at top", "#9ec5f0"),
+    ("went_up", "Went up", BAR_COLOR),
+    ("same", "Stayed the same", "rgba(128,128,128,0.45)"),
+    ("went_down", "Went down", ACCENT_COLOR),
+]
+
+
+def _show_change_groups(m: dict[str, dict[str, Any]]) -> None:
+    """One stacked bar per knowledge item: what happened to each person's rating."""
+    st.write("For each person, did their rating go up, stay the same, or go down from before "
+             "to after? People already at the top (5 of 5) had no room to go up.")
+    items = list(KNOWLEDGE_LABELS)[::-1]          # plotly draws the first row at the bottom
+    results = [m[f"change_groups.{k}"] for k in items]
+    y = [f"{KNOWLEDGE_LABELS[k]}<br>{_n(r)}" + ("" if r.get("value") else f" · {_fmt(r)}")
+         for k, r in zip(items, results)]
+    fig = go.Figure()
+    for key, name, color in CHANGE_GROUPS:
+        x = [r["value"][key] if r.get("value") else None for r in results]
+        fig.add_trace(go.Bar(
+            y=y, x=x, name=name, orientation="h", marker_color=color,
+            text=[f"{v:.0%}" if v is not None and v >= 0.06 else "" for v in x],
+            textposition="inside", insidetextanchor="middle",
+            hovertemplate=name + ": %{x:.0%}<extra></extra>"))
     fig.update_layout(
-        height=320, margin=dict(l=10, r=10, t=10, b=10), bargap=0.45, showlegend=False,
-        yaxis=dict(title="Average change (1–5 scale)", zeroline=True, zerolinewidth=1,
-                   gridcolor="rgba(128,128,128,0.15)"),
-        xaxis=dict(showgrid=False),
-    )
-    st.plotly_chart(fig, width="stretch", key="gain_chart")
-    top = m[f"ceiling_pct.{k}"]
-    st.caption(f"Total {_n(table)}. People who started high have little room to go up; "
-               f"{_fmt(top)} were already at the top before ({_n(top)}). "
-               "Self-reported retrospective change.")
+        barmode="stack", height=300, margin=dict(l=10, r=10, t=10, b=10), bargap=0.35,
+        legend=dict(orientation="h", y=-0.15, traceorder="normal"),
+        xaxis=dict(tickformat=".0%", range=[0, 1], showgrid=False),
+        yaxis=dict(showgrid=False))
+    st.plotly_chart(fig, width="stretch", key="change_groups_chart")
+    st.caption("n = people who answered both before and after. Before is recalled after the "
+               "training, so this is self-reported retrospective change.")
+
+
+def _show_results(flags: dict[str, dict[str, int]], m: dict[str, dict[str, Any]],
+                  exclude: bool) -> None:
+    """Section 2 as dropdowns. Headline numbers start open; the rest start closed."""
+    any_ = flags["flag_any"]
+    with st.expander(f"Rushed or doubtful answers · {any_['flagged']} of {any_['n']:,} flagged"
+                     + (" · left out" if exclude else " · included")):
+        _show_flags(flags)
+    post = m["agree_pct.post_when"]
+    with st.expander(f"Headline numbers · {_n(post)}", expanded=True):
+        _show_headline(m)
+    with st.expander("Before and after, by knowledge item"):
+        _show_knowledge(m)
+    with st.expander(f"Know when to use 988 vs. likely to call · {_n(m['know_call_2x2'])}"):
+        _show_know_call(m)
+    with st.expander("What changed for each person"):
+        _show_change_groups(m)
 
 
 # ----- M3: comparisons, sessions, trend, data health ------------------
@@ -413,6 +470,7 @@ def _val(v: Any, kind: str) -> str:
 def _show_compare(df: pd.DataFrame, metric: str) -> None:
     """Table of one measure by the chosen group."""
     st.subheader("Compare groups")
+    st.write("One measure, split into groups, so you can see which group scores higher or lower.")
     by = st.selectbox("Compare by", list(GROUP_LABELS), format_func=GROUP_LABELS.get,
                       key="m3_by")
     label, kind = METRIC_LABELS[metric]
@@ -439,6 +497,8 @@ def _show_compare(df: pd.DataFrame, metric: str) -> None:
 def _show_funnel(df: pd.DataFrame, metric: str) -> None:
     """Session funnel: each session against limits that widen for small sessions."""
     st.subheader("Sessions compared with the average")
+    st.write("Each dot is one session. A dot outside the grey lines scored unusually high or "
+             "low; small sessions get wider lines because their scores swing more by chance.")
     label, kind = METRIC_LABELS[metric]
     t = compare(df, "session_id", metric)
     shown = t[~t["suppressed"]].sort_values("metric_n") if not t.empty else t
@@ -490,6 +550,8 @@ def _show_funnel(df: pd.DataFrame, metric: str) -> None:
 def _show_trend(df: pd.DataFrame, metric: str) -> None:
     """Monthly trend, raw and adjusted for role mix."""
     st.subheader("Monthly trend, adjusted for who attended")
+    st.write("Orange: the score each month as measured. Blue: the score if every month had the "
+             "same mix of roles. If only orange moves, the change came from who attended.")
     label, kind = METRIC_LABELS[metric]
     t = monthly(df, metric)
     if t.empty:
@@ -519,9 +581,18 @@ def _show_trend(df: pd.DataFrame, metric: str) -> None:
 
 
 def _show_alerts(df: pd.DataFrame) -> None:
-    """Data-health alerts (blank answers by month, falling comment rate)."""
-    st.subheader("Data health")
+    """Data-health alerts (blank answers by month, falling comment rate), in a dropdown."""
     found = alerts(df)
+    label = (f"Data health · {len(found)} alert{'s' if len(found) != 1 else ''}" if found
+             else "Data health · no issues found")
+    with st.expander(label):
+        st.write("Checks whether some answers are missing more often than usual, which can make "
+                 "a score look low just because fewer people answered.")
+        _show_alert_list(found)
+
+
+def _show_alert_list(found: list[dict[str, Any]]) -> None:
+    """One warning per alert, then a ✓ line for each check that found nothing."""
     kinds = {a["kind"] for a in found}
     for a in found:
         name = FIELD_LABELS.get(a["field"], a["field"])
@@ -547,7 +618,7 @@ def _show_alerts(df: pd.DataFrame) -> None:
 CHART_SECTIONS = {
     "trend_adjusted": "Monthly trend, adjusted for who attended",
     "know_call_2x2": "Know when to use 988 vs. likely to call",
-    "intent_drivers": "Headline numbers", "gain_by_baseline": "Change by starting level",
+    "intent_drivers": "Headline numbers", "gain_by_baseline": "What changed for each person",
     "data_health": "Data health", "trend_comments": "Data health",
     "session_funnel": "Sessions compared with the average", "headline": "Headline numbers",
     "keep_fix_add": "Comment board (section 5, coming soon)",
@@ -656,33 +727,17 @@ def main() -> None:
         st.error(str(exc))
         return
 
-    stats, raw, cleaned = result["stats"], result["raw"], result["clean"]
+    cleaned = result["clean"]
 
     _section(1)
-    _show_counts(stats)
-    _show_files(stats)
-    _show_health(stats)
-    _show_mapping(result["mapping"])
+    _show_data_check(result)
     if cleaned is None:
         return
-    _show_cleaning(result["fix_log"], result["unknown"])
-    st.subheader("Preview")
-    n = min(PREVIEW_ROWS, len(raw))
-    tab_clean, tab_raw = st.tabs(["Cleaned", "As exported"])
-    with tab_clean:
-        st.caption(f"First {n} of {len(cleaned)} rows after cleaning.")
-        st.dataframe(cleaned.head(PREVIEW_ROWS), width="stretch")
-    with tab_raw:
-        st.caption(f"First {n} of {len(raw)} rows, exactly as in the file(s).")
-        st.dataframe(raw.head(PREVIEW_ROWS), width="stretch")
 
     _section(2)
-    exclude = _show_flags(result["flags"])
+    exclude = _flag_toggle(result["flags"])
     metrics = result["metrics"][exclude]
-    _show_headline(metrics)
-    _show_knowledge(metrics)
-    _show_know_call(metrics)
-    _show_gain(metrics)
+    _show_results(result["flags"], metrics, exclude)
 
     df = drop_flagged(cleaned) if exclude else cleaned
     _section(3)

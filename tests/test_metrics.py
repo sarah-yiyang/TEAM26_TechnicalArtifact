@@ -103,6 +103,24 @@ def test_pre_post_change_declined_ceiling(low_n) -> None:
     assert gain[1]["value"] == 4 and gain[5] == {"value": 0.0, "n": 1}
 
 
+def test_change_groups_split_and_sum(low_n) -> None:
+    # up, top->top, same below top, top->down, down, blank post (dropped)
+    df = _table(6, pre_when=[2, 5, 3, 5, 4, 1], post_when=[4, 5, 3, 3, 2, None])
+    m = compute(df, low_n)
+    g = _v(m, "change_groups.when")
+    assert m["change_groups.when"]["n"] == 5
+    assert g == pytest.approx({"at_top": 1 / 5, "went_up": 1 / 5, "same": 1 / 5,
+                               "went_down": 2 / 5})
+    assert sum(g.values()) == pytest.approx(1.0)
+    assert g["went_down"] == pytest.approx(_v(m, "declined_pct.when"))
+
+
+def test_change_groups_missing_and_too_few(schema, low_n) -> None:
+    df = _table(5).drop(columns=["pre_when"])
+    assert compute(df, low_n)["change_groups.when"]["status"] == NOT_COLLECTED
+    assert compute(_table(5), schema)["change_groups.when"]["status"] == TOO_FEW
+
+
 def test_wilcoxon_none_when_no_change(low_n) -> None:
     m = compute(_table(5), low_n)
     assert _v(m, "wilcoxon_p.when") is None

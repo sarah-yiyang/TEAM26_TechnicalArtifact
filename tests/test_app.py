@@ -36,8 +36,9 @@ def test_app_shows_mapping_and_cleaning() -> None:
     at.session_state["use_sample"] = True
     at.run(timeout=30)
     assert not at.exception
-    headers = [h.value for h in at.subheader]
-    assert "Column matching" in headers and "Fixes and unknown values" in headers
+    labels = [e.label for e in at.expander]
+    for name in ("Files", "Preview", "Rows loaded", "Column matching", "Fixes and unknown values"):
+        assert any(lbl.startswith(name) for lbl in labels)
     values = {m.label: m.value for m in at.metric}
     assert values["Questions matched"] == "20"
     assert values["Questions missing"] == "0"
@@ -51,10 +52,10 @@ def test_app_shows_m2_headline_and_toggle() -> None:
     at.session_state["use_sample"] = True
     at.run(timeout=30)
     assert not at.exception
-    headers = [h.value for h in at.subheader]
-    for h in ("Rushed or doubtful answers", "Headline numbers",
-              "Know when to use 988 vs. likely to call", "Change by starting level"):
-        assert h in headers
+    labels = [e.label for e in at.expander]
+    for h in ("Rushed or doubtful answers", "Headline numbers", "Before and after",
+              "Know when to use 988 vs. likely to call", "What changed for each person"):
+        assert any(lbl.startswith(h) for lbl in labels)
     values = {m.label: m.value for m in at.metric}
     assert values["Know when to use 988"] == "97%"          # 28 of 29 on the sample
     # sample has only 9 likely_call answers -> suppressed, not a number
@@ -74,8 +75,9 @@ def test_app_shows_m3_sections() -> None:
     assert not at.exception
     headers = [h.value for h in at.subheader]
     for h in ("Compare groups", "Sessions compared with the average",
-              "Monthly trend, adjusted for who attended", "Data health"):
+              "Monthly trend, adjusted for who attended"):
         assert h in headers
+    assert any(e.label.startswith("Data health") for e in at.expander)
     # sample is tiny: every session is hidden rather than scored
     assert any("no session has enough answers" in i.value for i in at.info)
 

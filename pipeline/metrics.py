@@ -90,10 +90,26 @@ def _gain_table(d: pd.DataFrame, pre: str, post: str, min_n: int) -> dict[int, A
     return table
 
 
+def _change_groups(d: pd.DataFrame, pre: str, post: str) -> dict[str, float] | None:
+    """Shares of paired rows in four groups that never overlap and sum to 1.
+
+    at_top = before and after both at the top; went_up / went_down = after
+    above / below before (top-starters who dropped count as went_down);
+    same = no change, below the top.
+    """
+    if not len(d):
+        return None
+    diff = d[post] - d[pre]
+    at_top = d[pre].eq(LIKERT_MAX) & d[post].eq(LIKERT_MAX)
+    return {"at_top": float(at_top.mean()), "went_up": float(diff.gt(0).mean()),
+            "same": float((diff.eq(0) & ~at_top).mean()), "went_down": float(diff.lt(0).mean())}
+
+
 def _pre_post(df: pd.DataFrame, schema: dict[str, Any], min_n: int) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for k, (pre, post) in _pairs(schema).items():
-        names = ["mean_change", "wilcoxon_p", "declined_pct", "ceiling_pct", "gain_by_baseline"]
+        names = ["mean_change", "wilcoxon_p", "declined_pct", "ceiling_pct", "gain_by_baseline",
+                 "change_groups"]
         if pre not in df.columns or post not in df.columns:
             out.update({f"{m}.{k}": _missing() for m in names})
             continue
@@ -107,6 +123,7 @@ def _pre_post(df: pd.DataFrame, schema: dict[str, Any], min_n: int) -> dict[str,
         out[f"ceiling_pct.{k}"] = _result(
             float(pre_all.eq(LIKERT_MAX).mean()) if len(pre_all) else None, len(pre_all), min_n)
         out[f"gain_by_baseline.{k}"] = _result(_gain_table(d, pre, post, min_n), n, min_n)
+        out[f"change_groups.{k}"] = _result(_change_groups(d, pre, post), n, min_n)
     return out
 
 
