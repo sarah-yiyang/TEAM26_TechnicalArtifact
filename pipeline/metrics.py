@@ -210,6 +210,70 @@ def _comment_rates(df: pd.DataFrame, fields: list[str], min_n: int) -> dict[str,
     return out
 
 
+def _delivery_items(schema: dict[str, Any]) -> list[str]:
+    """Likert items that are not part of a before/after knowledge pair."""
+    knowledge = {x for pair in _pairs(schema).values() for x in pair}
+    return [c for c in _fields(schema, "likert") if c not in knowledge]
+
+
+# ----- per-response scores (used by segments and trends) ---------------
+
+# Metrics that can be scored per response, and whether they are a share (0/1)
+# or an average. The mean of a column of row_values() equals compute()'s value.
+ROW_METRICS: dict[str, str] = {
+    "agree_pct.post_when": "share",
+    "mean_change.when": "mean",
+    "nps": "mean",
+    "likely_call.pct_high": "share",
+    "delivery_agree_pct": "share",
+}
+
+
+def row_values(df: pd.DataFrame, schema: dict[str, Any] | None = None) -> pd.DataFrame:
+    """One score per response for each metric in ``ROW_METRICS``; blank stays NaN.
+
+    Agree / very likely / delivery -> 1 or 0; NPS -> +100, 0 or -100;
+    change -> after minus before. Metrics whose questions are missing are left out.
+    """
+    schema = load_schema() if schema is None else schema
+    a = schema.get("analysis", {}) or {}
+    cut = a["agree_threshold"]
+    pre, post = _pairs(schema).get("when", ("pre_when", "post_when"))
+    out = pd.DataFrame(index=df.index)
+
+    def num(col: str) -> pd.Series:
+        return pd.to_numeric(df[col], errors="coerce").astype(float)
+
+    def share(mask: pd.Series, answered: pd.Series) -> pd.Series:
+        return mask.astype(float).where(answered)
+
+    if post in df.columns:
+        v = num(post)
+        out["agree_pct.post_when"] = share(v.ge(cut), v.notna())
+        if pre in df.columns:
+            out["mean_change.when"] = v - num(pre)
+    if "nps" in df.columns:
+        v = num("nps")
+        score = np.where(v >= a["nps_promoter_min"], 100.0,
+                         np.where(v <= a["nps_detractor_max"], -100.0, 0.0))
+        out["nps"] = pd.Series(score, index=df.index).where(v.notna())
+    if "likely_call" in df.columns:
+        v = num("likely_call")
+        out["likely_call.pct_high"] = share(v.ge(a["likely_call_high"]), v.notna())
+    items = _delivery_items(schema)
+    if items and all(c in df.columns for c in items):
+        d = df[items].apply(pd.to_numeric, errors="coerce")
+        out["delivery_agree_pct"] = share(d.ge(cut).all(axis=1), d.notna().all(axis=1))
+    return out
+
+
+def drop_flagged(df: pd.DataFrame) -> pd.DataFrame:
+    """Copy of ``df`` without rows where ``flag_any`` is True."""
+    if "flag_any" not in df.columns:
+        raise ValueError("exclude_flagged needs flag_any; run quality.add_flags first")
+    return df[~df["flag_any"].astype(bool)].copy()
+
+
 # ----- main entry point -----------------------------------------------
 
 def compute(
@@ -223,17 +287,11 @@ def compute(
     schema = load_schema() if schema is None else schema
     a = schema.get("analysis", {}) or {}
     min_n = min_n_from(schema)
-    data = df.copy()
-    if exclude_flagged:
-        if "flag_any" not in data.columns:
-            raise ValueError("exclude_flagged needs flag_any; run quality.add_flags first")
-        data = data[~data["flag_any"].astype(bool)]
+    data = drop_flagged(df) if exclude_flagged else df.copy()
 
     likert = _fields(schema, "likert")
-    pairs = _pairs(schema)
-    pre_items = {p for p, _ in pairs.values()}
-    knowledge = {x for pair in pairs.values() for x in pair}
-    delivery = [c for c in likert if c not in knowledge]
+    pre_items = {p for p, _ in _pairs(schema).values()}
+    delivery = _delivery_items(schema)
     driver_items = [c for c in likert if c not in pre_items]
     cut = a["agree_threshold"]
 
@@ -249,4 +307,4 @@ def compute(
     return out
 
 
-__all__ = ["compute", "NOT_COLLECTED", "TOO_FEW"]
+__all__ = ["compute", "row_values", "drop_flagged", "ROW_METRICS", "NOT_COLLECTED", "TOO_FEW"]

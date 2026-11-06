@@ -16,18 +16,39 @@ from pipeline import ROOT, load_schema
 from pipeline.cleaning import clean
 from pipeline.ingest import load_files
 from pipeline.mapping import map_columns
-from pipeline.metrics import compute
+from pipeline.metrics import compute, drop_flagged
 from pipeline.quality import add_flags, flag_summary
+from pipeline.segments import NOT_RECORDED, compare
+from pipeline.trends import alerts, monthly
 
 SAMPLE_PATH = ROOT / "data" / "sample_30rows.xlsx"
 PREVIEW_ROWS = 20
 BAR_COLOR = "#2a78d6"
+ACCENT_COLOR = "#eb6834"
+MUTED_COLOR = "rgba(128,128,128,0.6)"
+METRIC_LABELS: dict[str, tuple[str, str]] = {
+    "agree_pct.post_when": ("Know when to use 988 (agree)", "pct"),
+    "mean_change.when": ("Self-reported change, 'know when to use 988' (1–5)", "change"),
+    "nps": ("Would recommend (NPS)", "num"),
+    "likely_call.pct_high": ("Very likely to call 988 (9–10)", "pct"),
+    "delivery_agree_pct": ("Liked the delivery (all 3 items)", "pct"),
+}
+GROUP_LABELS = {"role_primary": "Role", "county": "County", "language": "Language",
+                "month": "Month", "session_id": "Session (date + county)"}
+FIELD_LABELS = {
+    "pre_identify": "Could identify challenges (before)", "pre_describe": "Could describe 988 (before)",
+    "pre_when": "Knew when to use 988 (before)", "post_identify": "Can identify challenges (after)",
+    "post_describe": "Can describe 988 (after)", "post_when": "Know when to use 988 (after)",
+    "presenter_engaged": "Presenter engaged participants", "presenter_knew": "Presenter knew the subject",
+    "well_organized": "Training well organized", "nps": "Would recommend",
+    "likely_call": "Likely to call 988", "comment_valuable": "'Most valuable' comment",
+    "comment_improve": "'How to improve' comment",
+}
 KNOWLEDGE_LABELS = {"identify": "Can identify mental health challenges",
                     "describe": "Can describe 988 and how it works",
                     "when": "Knows when to use 988"}
 
 LATER_MILESTONES: list[tuple[int, str, str]] = [
-    (3, "Comparisons and trends", "Compare by role, county or session; monthly trend adjusted for audience."),
     (4, "Insight cards", "Automatic checks on the data, with the evidence behind each finding."),
     (5, "Comment board", "Comments sorted into Keep / Fix / Add themes."),
     (6, "Summary", "A copy-ready written summary of the findings."),
@@ -348,6 +369,147 @@ def _show_gain(m: dict[str, dict[str, Any]]) -> None:
                "Self-reported retrospective change.")
 
 
+# ----- M3: comparisons, sessions, trend, data health ------------------
+
+def _val(v: Any, kind: str) -> str:
+    """Format a plain value from a segments/trends table."""
+    if v is None or pd.isna(v):
+        return "too few responses"
+    return _fmt({"value": float(v)}, kind)
+
+
+def _show_compare(df: pd.DataFrame, metric: str) -> None:
+    """Table of one measure by the chosen group."""
+    st.subheader("Compare groups")
+    by = st.selectbox("Compare by", list(GROUP_LABELS), format_func=GROUP_LABELS.get,
+                      key="m3_by")
+    label, kind = METRIC_LABELS[metric]
+    t = compare(df, by, metric)
+    if t.empty:
+        st.info("Not collected: this file has no answers for this measure or grouping.")
+        return
+    rows = []
+    for r in t.itertuples():
+        notes = []
+        if r.suppressed:
+            notes.append("too few responses")
+        if getattr(r, "out_of_area", False):
+            notes.append("outside Maryland")
+        if getattr(r, "outlier", False):
+            notes.append("outside session limits")
+        rows.append({GROUP_LABELS[by]: r.group, label: _val(r.value, kind),
+                     "Answered": r.metric_n, "Rows": r.n, "Note": ", ".join(notes)})
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    st.caption(f"Groups with fewer than {load_schema()['analysis']['min_n']} answers are not "
+               f"scored. \"{NOT_RECORDED}\" = rows with this field blank; they are kept.")
+
+
+def _show_funnel(df: pd.DataFrame, metric: str) -> None:
+    """Session funnel: each session against limits that widen for small sessions."""
+    st.subheader("Sessions compared with the average")
+    label, kind = METRIC_LABELS[metric]
+    t = compare(df, "session_id", metric)
+    shown = t[~t["suppressed"]].sort_values("metric_n") if not t.empty else t
+    if shown.empty:
+        st.info("Not shown: no session has enough answers.")
+        return
+    fig = go.Figure()
+    for col, name, dash in (("lower998", "99.8% limits", "solid"),
+                            ("upper998", None, "solid"),
+                            ("lower95", "95% limits", "dot"), ("upper95", None, "dot")):
+        fig.add_trace(go.Scatter(
+            x=shown["metric_n"], y=shown[col], mode="lines", name=name or "",
+            showlegend=name is not None, legendgroup=dash, hoverinfo="skip",
+            line=dict(color=MUTED_COLOR, width=1.5, dash=dash)))
+    fig.add_trace(go.Scatter(
+        x=[shown["metric_n"].min(), shown["metric_n"].max()], y=[t["centre"].iloc[0]] * 2,
+        mode="lines", name="All sessions", hoverinfo="skip",
+        line=dict(color=MUTED_COLOR, width=1, dash="dash")))
+    for is_out, name, color, symbol in ((False, "Session", BAR_COLOR, "circle"),
+                                        (True, "Outside 99.8% limits", ACCENT_COLOR, "diamond")):
+        pts = shown[shown["outlier"] == is_out]
+        if pts.empty:
+            continue
+        fig.add_trace(go.Scatter(
+            x=pts["metric_n"], y=pts["value"], mode="markers", name=name,
+            customdata=pts["group"],
+            marker=dict(color=color, size=11 if is_out else 9, symbol=symbol,
+                        line=dict(color="white", width=2)),
+            hovertemplate="%{customdata}<br>n = %{x}<br>%{y:.2f}<extra></extra>"))
+    fig.update_layout(
+        height=380, margin=dict(l=10, r=10, t=10, b=10),
+        legend=dict(orientation="h", y=-0.2),
+        xaxis=dict(title="Answers in session (n)", showgrid=False),
+        yaxis=dict(title=label, gridcolor="rgba(128,128,128,0.15)",
+                   tickformat=".0%" if kind == "pct" else None))
+    st.plotly_chart(fig, width="stretch", key="funnel_chart")
+    hidden = int(t["suppressed"].sum())
+    outliers = list(shown.loc[shown["outlier"], "group"])
+    st.caption(f"{len(shown)} sessions shown; {hidden} with too few answers are hidden. "
+               "Limits are wider for small sessions, so a session is only flagged when it is "
+               "unlikely to be chance. Sessions are not adjusted for audience: a session of "
+               "adults can look different from one of students for that reason alone.")
+    if outliers:
+        st.warning("Outside the 99.8% limits: " + ", ".join(outliers))
+    else:
+        st.success("✓ Checked: no session is outside the 99.8% limits.")
+
+
+def _show_trend(df: pd.DataFrame, metric: str) -> None:
+    """Monthly trend, raw and adjusted for role mix."""
+    st.subheader("Monthly trend, adjusted for who attended")
+    label, kind = METRIC_LABELS[metric]
+    t = monthly(df, metric)
+    if t.empty:
+        st.info("Not collected: no training month or no answers for this measure.")
+        return
+    hover = [f"{m}<br>n = {n}" + (" (too few)" if s else "")
+             for m, n, s in zip(t["month"], t["n"], t["suppressed"])]
+    fig = go.Figure()
+    for col, name, color, dash in (("raw", "As reported", ACCENT_COLOR, "dot"),
+                                   ("adjusted", "Adjusted for role mix", BAR_COLOR, "solid")):
+        fig.add_trace(go.Scatter(
+            x=t["month"], y=t[col], mode="lines+markers", name=name, connectgaps=False,
+            customdata=hover, line=dict(color=color, width=2, dash=dash),
+            marker=dict(size=8, line=dict(color="white", width=2)),
+            hovertemplate="%{customdata}<br>" + name + ": %{y:.2f}<extra></extra>"))
+    fig.update_layout(
+        height=360, margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified",
+        legend=dict(orientation="h", y=-0.2),
+        xaxis=dict(type="category", showgrid=False),
+        yaxis=dict(title=label, gridcolor="rgba(128,128,128,0.15)",
+                   tickformat=".0%" if kind == "pct" else None))
+    st.plotly_chart(fig, width="stretch", key="trend_chart")
+    small = list(t.loc[t["suppressed"], "month"])
+    st.caption("Adjusted = what the month would score if its audience had the usual mix of "
+               "roles. If only the 'as reported' line moves, the change came from who attended."
+               + (f" Gaps: {', '.join(small)} had too few answers." if small else ""))
+
+
+def _show_alerts(df: pd.DataFrame) -> None:
+    """Data-health alerts (blank answers by month, falling comment rate)."""
+    st.subheader("Data health")
+    found = alerts(df)
+    kinds = {a["kind"] for a in found}
+    for a in found:
+        name = FIELD_LABELS.get(a["field"], a["field"])
+        if a["kind"] == "blank_answers":
+            parts = [f"{m['month']}: {m['blank_pct']:.0%} of {m['rows']}" for m in a["months"]]
+            other = a["months"][0]["other_months_blank_pct"]
+            st.warning(f"{name} was blank (skipped or not asked) much more often in some "
+                       f"months: {'; '.join(parts)} (other months: about {other:.0%}). "
+                       "Scores for those months rest on fewer answers. Blanks are not counted "
+                       "as disagree.")
+        else:
+            st.warning(f"Fewer people wrote a {name} in {a['month']}: {a['rate']:.0%} of "
+                       f"{a['rows']} vs {a['earlier_rate']:.0%} of {a['earlier_rows']} in "
+                       "earlier months.")
+    if "blank_answers" not in kinds:
+        st.success("✓ Checked: no question is unusually blank in any month.")
+    if "fewer_comments" not in kinds:
+        st.success("✓ Checked: comment rate has not dropped in the latest month.")
+
+
 # ----- page -----------------------------------------------------------
 
 def main() -> None:
@@ -394,6 +556,15 @@ def main() -> None:
     _show_knowledge(metrics)
     _show_know_call(metrics)
     _show_gain(metrics)
+
+    df = drop_flagged(cleaned) if exclude else cleaned
+    st.header("Comparisons and trends")
+    metric = st.selectbox("Measure", list(METRIC_LABELS),
+                          format_func=lambda k: METRIC_LABELS[k][0], key="m3_metric")
+    _show_compare(df, metric)
+    _show_funnel(df, metric)
+    _show_trend(df, metric)
+    _show_alerts(df)
 
     st.subheader("Preview")
     n = min(PREVIEW_ROWS, len(raw))

@@ -65,3 +65,25 @@ def test_app_shows_m2_headline_and_toggle() -> None:
     at.toggle[0].set_value(True).run(timeout=30)
     assert not at.exception
     assert any("n = 26" in c.value for c in at.caption)
+
+
+def test_app_shows_m3_sections() -> None:
+    at = AppTest.from_file(APP)
+    at.session_state["use_sample"] = True
+    at.run(timeout=30)
+    assert not at.exception
+    headers = [h.value for h in at.subheader]
+    for h in ("Compare groups", "Sessions compared with the average",
+              "Monthly trend, adjusted for who attended", "Data health"):
+        assert h in headers
+    # sample is tiny: every session is hidden rather than scored
+    assert any("no session has enough answers" in i.value for i in at.info)
+
+    for by in ("role_primary", "county", "language", "month", "session_id"):
+        at.selectbox(key="m3_by").set_value(by).run(timeout=30)
+        assert not at.exception
+    for metric in ("nps", "likely_call.pct_high", "delivery_agree_pct", "mean_change.when"):
+        at.selectbox(key="m3_metric").set_value(metric).run(timeout=30)
+        assert not at.exception
+    at.toggle[0].set_value(True).run(timeout=30)
+    assert not at.exception

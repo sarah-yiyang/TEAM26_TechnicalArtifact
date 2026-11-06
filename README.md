@@ -37,3 +37,7 @@ idea
 * 1 feature to summarize people's most valuable part: so where to keep in the training
 * 1 feature to summarize main improvement suggestions
 * to explain in business value: staff will save time reading responses. 
+
+later prompts
+* in app.py; classify which sections are checks which are insights.
+* reorganize layout to emphasize the 3 features
