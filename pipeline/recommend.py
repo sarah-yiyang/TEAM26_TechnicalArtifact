@@ -52,6 +52,8 @@ J_TARGET_FRACTION: float = 0.5    # success target: halve the top topic
 CONF_STRONG: int = 100
 CONF_MODERATE: int = 50
 
+H_LIMITS: str = "99.8%"           # segments.py flags sessions outside these limits
+
 LEVERS: tuple[str, ...] = (
     "curriculum_content", "presenter_coaching", "audience_targeting", "language_access",
     "scheduling_format", "survey_design", "funder_reporting",
@@ -191,17 +193,38 @@ def _status(m: dict[str, Any] | None) -> str | None:
 
 def _out(result: str, evidence: dict[str, Any] | None = None, n: int = 0,
          ratio: float = 1.0) -> dict[str, Any]:
-    return {"result": result, "evidence": evidence or {}, "n": int(n), "ratio": ratio}
+    ev = dict(evidence or {})
+    if result == TOO_FEW:
+        ev.setdefault("n", int(n))
+    return {"result": result, "evidence": ev, "n": int(n), "ratio": ratio}
+
+
+def _thresholds() -> dict[str, dict[str, Any]]:
+    """Each check's flag line, formatted as shown in its rule text."""
+    return {
+        "A": {"threshold": _points(A_MIX_GAP_SHARE).lstrip("+")},
+        "B": {"threshold": _pct(B_GAP_MIN)},
+        "C": {"threshold": f"{C_MARGIN:.2f}"},
+        "D": {"threshold": _pct(D_CEILING_MIN)},
+        "E": {"threshold": _pct(BLANK_ALERT_MIN)},
+        "F": {"threshold": _pct(F_SILENT_MIN)},
+        "G": {"threshold": _points(COMMENT_DROP).lstrip("+")},
+        "H": {"threshold": H_LIMITS},
+        "I": {"threshold": _points(I_SHIFT["agree_pct.post_when"]).lstrip("+"),
+              "threshold_nps": f"{I_SHIFT['nps']:.0f}"},
+        "J": {"threshold": _pct(J_QUESTION_MIN)},
+    }
 
 
 def _check_a(ctx: dict[str, Any]) -> dict[str, Any]:
     t = ctx["trends"].get("monthly")
     metric = ctx["trends"].get("metric", "agree_pct.post_when")
-    if t is None or t.empty or t["adjusted"].isna().all() and t["raw"].isna().all():
-        return _out(NOT_COLLECTED if t is None or t.empty else TOO_FEW)
+    if t is None or t.empty:
+        return _out(NOT_COLLECTED)
     ok = t[~t["suppressed"]]
     if len(ok) < 2:
-        return _out(TOO_FEW, n=int(t["n"].sum()))
+        big = int(t["n"].max())
+        return _out(TOO_FEW, {"n": big, "months_ok": len(ok)}, big)
     if ok["adjusted"].isna().all():
         return _out(NOT_COLLECTED)
     first, last = ok.iloc[0], ok.iloc[-1]
@@ -261,8 +284,8 @@ def _check_d(ctx: dict[str, Any]) -> dict[str, Any]:
     items = {k: ctx["m"].get(f"ceiling_pct.{k}") for k in pairs}
     usable = {k: v for k, v in items.items() if not _status(v)}
     if not usable:
-        any_n = any(v and v.get("n", 0) for v in items.values())
-        return _out(TOO_FEW if any_n else NOT_COLLECTED)
+        big = max((int(v.get("n", 0)) for v in items.values() if v), default=0)
+        return _out(TOO_FEW if big else NOT_COLLECTED, n=big)
     k = max(usable, key=lambda x: usable[x]["value"])
     v = usable[k]
     ev = {"ceiling_pct": _pct(v["value"]), "n": int(v["n"]),
@@ -280,9 +303,12 @@ def _judged_months(ctx: dict[str, Any]) -> pd.DataFrame:
 
 
 def _check_e(ctx: dict[str, Any]) -> dict[str, Any]:
-    months = _judged_months(ctx)
+    months, t = _judged_months(ctx), ctx["trends"].get("monthly")
+    if t is None or t.empty:
+        return _out(NOT_COLLECTED)
     if months.empty:
-        return _out(TOO_FEW if ctx["trends"].get("monthly") is not None else NOT_COLLECTED)
+        big = int(t["rows"].max())
+        return _out(TOO_FEW, n=big)
     hits = [(a, h) for a in ctx["trends"].get("alerts", []) if a.get("id") == "E"
             for h in a.get("months", [])]
     total = int(months["rows"].sum())
@@ -296,9 +322,12 @@ def _check_e(ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def _check_g(ctx: dict[str, Any]) -> dict[str, Any]:
-    months = _judged_months(ctx)
+    months, t = _judged_months(ctx), ctx["trends"].get("monthly")
+    if t is None or t.empty:
+        return _out(NOT_COLLECTED)
     if len(months) < 2:
-        return _out(TOO_FEW if ctx["trends"].get("monthly") is not None else NOT_COLLECTED)
+        big = int(t["rows"].max())
+        return _out(TOO_FEW, {"n": big, "months_ok": len(months)}, big)
     hits = [a for a in ctx["trends"].get("alerts", []) if a.get("id") == "G"]
     total = int(months["rows"].sum())
     if not hits:
@@ -414,6 +443,13 @@ def _fill(entry: dict[str, Any], section: str, key: str, ev: dict[str, Any],
     return text
 
 
+def _fill_top(entry: dict[str, Any], key: str, ev: dict[str, Any],
+              allowed: list[str], gaps: list[str]) -> str | None:
+    text, problems = render(entry.get(key), ev, allowed)
+    gaps.extend(f"{key}: {p}" for p in problems)
+    return text
+
+
 def _evidence_text(ev: dict[str, Any]) -> str:
     """Fallback card text when no wording is configured: the evidence itself."""
     return "; ".join(f"{k}: {v}" for k, v in ev.items())
@@ -427,12 +463,17 @@ def _build(cid: str, res: dict[str, Any], entry: dict[str, Any] | None,
         entry = {}
     else:
         gaps.extend(_entry_errors(entry))
-    ev, n = res["evidence"], res["n"]
+    ev = {**_thresholds()[cid], "min_n": MIN_N, **res["evidence"]}
+    n = res["n"]
     question = str(entry.get("question") or f"Check {cid}")
     run = {"id": cid, "question": question, "result": res["result"], "text": None,
+           "rule": _fill_top(entry, "rule", ev, allowed, gaps) if entry else None,
            "n": n, "evidence": ev, "config_gaps": gaps}
     if res["result"] == NO_FINDING:
         run["text"] = _fill(entry, "no_finding", "text", ev, allowed, gaps) if entry else None
+        return None, run
+    if res["result"] == TOO_FEW:
+        run["text"] = _fill_top(entry, "too_few", ev, allowed, gaps) if entry else None
         return None, run
     if res["result"] != FINDING:
         return None, run

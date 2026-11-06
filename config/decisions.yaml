@@ -8,9 +8,14 @@
 # - {placeholders} are filled ONLY from the card's evidence. Values arrive
 #   already formatted (percentages include "%"), so don't add "%" after them.
 # - No number may appear in a template unless it is in allowed_literals.
+# - rule = what makes the check flag (shown in Checks run, so results can be verified).
+# - too_few = why a check could not run; {n} is the number that fell short.
+# - Every check's evidence also has {threshold} and {min_n}.
+# - decision = the yes/no choice the owner makes, phrased as a question.
 # - finding.text = what we found; finding.action = options to consider (not
 #   instructions); finding.success_measure = how we'd know it worked.
-# - owner_role is a placeholder until EveryMind confirms it (confirmed: false).
+# - owner_role is an area of responsibility, not a job title, since we don't know
+#   who does what at EveryMind. EveryMind confirms each one (confirmed: false).
 #   Leave a check out entirely if nobody owns it: the card shows "Not assigned".
 
 version: 1
@@ -45,11 +50,18 @@ labels:
 checks:
   A:
     question: Did the score change only because the audience changed?
-    decision: Is the trend real or a shift in who we trained?
+    decision: Report this trend with the audience-adjusted line next to it?
     lever: funder_reporting
     secondary_lever: audience_targeting
-    owner_role: Program Director
+    owner_role: Program reporting
     confirmed: false
+    rule: >
+      Flags when the as-reported and audience-adjusted change, from the
+      first to the last month with enough answers, differ by {threshold} or
+      more.
+    too_few: >
+      Needs two months with at least {min_n} answers each; {months_ok}
+      qualify (largest month: {n} answers).
     finding:
       text: >
         From {first_month} to {last_month}, "{metric_label}" moved
@@ -65,17 +77,25 @@ checks:
         less than {target_gap}.
     no_finding:
       text: >
-        The "{metric_label}" trend looks the same with or without adjusting
-        for who attended (n = {n}).
+        Between {first_month} and {last_month}, "{metric_label}" moved
+        {raw_change} as reported and {adjusted_change} after adjusting for
+        who attended, a gap under {threshold} ({n} answers across the two
+        months).
 
   B:
     question: Do people know when to use 988 but still wouldn't call?
     decision: >
-      Does the curriculum address why people hesitate to call
-      (what happens, confidentiality, 911 vs 988)?
+      Add content on why people hesitate to call (what happens,
+      confidentiality, 911 vs 988)?
     lever: curriculum_content
-    owner_role: Curriculum Lead
+    owner_role: Curriculum
     confirmed: false
+    rule: >
+      Flags when {threshold} or more of respondents know when to use 988 but
+      are not very likely to call.
+    too_few: >
+      Only {n} people answered both 'know when to use 988' and 'likely to
+      call'; needs {min_n}.
     finding:
       text: >
         {gap_pct} of respondents ({gap_n} of {n}) say they know when to use
@@ -89,15 +109,22 @@ checks:
         {target_pct} next quarter, with at least {min_n} responses.
     no_finding:
       text: >
-        Most people who know when to use 988 also say they would call
-        (n = {n}).
+        {gap_pct} know when to use 988 but are not very likely to call
+        ({gap_n} of {n} who answered both questions), under the {threshold}
+        line.
 
   C:
     question: Is delivery more linked to intent to call than knowledge?
-    decision: Should we invest in presenter coaching/observation?
+    decision: Invest in presenter coaching or peer observation?
     lever: presenter_coaching
-    owner_role: Training Supervisor
+    owner_role: Presenter support
     confirmed: false
+    rule: >
+      Flags when the strongest delivery item is linked to willingness to
+      call by {threshold} or more above the strongest knowledge item.
+    too_few: >
+      Only {n} people answered every item and 'likely to call'; needs
+      {min_n}.
     finding:
       text: >
         How the session was delivered is more closely linked to people's
@@ -113,18 +140,24 @@ checks:
         next quarter.
     no_finding:
       text: >
-        Delivery is not more closely linked to willingness to call than
-        knowledge is (n = {n}).
+        Strongest delivery link {delivery_link} vs strongest knowledge link
+        {knowledge_link}: delivery is not ahead by {threshold} or more (at
+        least {n} answers per item).
 
   D:
     question: Were many already at the top before training?
     decision: >
-      Do some audiences need a more advanced version, or does the
-      pre-question need rewording?
+      Offer a more advanced version for audiences who start high, or
+      reword the before-training question?
     lever: audience_targeting
     secondary_lever: survey_design
-    owner_role: Curriculum Lead
+    owner_role: Curriculum
     confirmed: false
+    rule: >
+      Flags when {threshold} or more already gave the top score on a before-
+      training question.
+    too_few: >
+      Only {n} people answered the before-training questions; needs {min_n}.
     finding:
       text: >
         {ceiling_pct} of respondents (n = {n}) already gave the top score on
@@ -138,15 +171,21 @@ checks:
         "{item_label}" in the next survey round.
     no_finding:
       text: >
-        Few respondents were already at the top score before training
-        (n = {n}).
+        The highest share already at the top before training was
+        {ceiling_pct} ("{item_label}", {n} answers), under the {threshold}
+        line.
 
   E:
     question: Is a score low only because answers are blank?
-    decision: Fix survey layout or required fields?
+    decision: Change the survey layout or make this question required?
     lever: survey_design
-    owner_role: Evaluation Lead
+    owner_role: Survey and evaluation
     confirmed: false
+    rule: >
+      Flags when a question is left blank in {threshold} or more of a
+      month's answers, well above other months.
+    too_few: >
+      No month has at least {min_n} responses (largest month: {n}).
     finding:
       text: >
         In {month}, {blank_pct} of answers to "{question_label}" were left
@@ -160,15 +199,20 @@ checks:
         month.
     no_finding:
       text: >
-        No question has an unusual share of blank answers in any month
-        (n = {n}).
+        No question was blank in {threshold} or more of a month's answers
+        ({n} responses in months with at least {min_n}).
 
   F:
     question: Are unhappy respondents silent about why?
-    decision: Add a follow-up question for low scorers?
+    decision: Add a follow-up question for people who give a low rating?
     lever: survey_design
-    owner_role: Evaluation Lead
+    owner_role: Survey and evaluation
     confirmed: false
+    rule: >
+      Flags when {threshold} or more of people who gave a low rating leave
+      no comment.
+    too_few: >
+      Only {n} people gave a low rating; needs {min_n}.
     finding:
       text: >
         {silent_pct} of people who gave a low rating ({low_cutoff} or below;
@@ -181,14 +225,21 @@ checks:
         change.
     no_finding:
       text: >
-        Most people who gave a low rating also explained why (n = {low_n}).
+        {silent_pct} of the {low_n} people who gave a low rating left no
+        comment, under the {threshold} line.
 
   G:
     question: Are fewer people writing comments?
-    decision: Change when/how the survey is given?
+    decision: Change when or how the survey is given?
     lever: survey_design
-    owner_role: Evaluation Lead
+    owner_role: Survey and evaluation
     confirmed: false
+    rule: >
+      Flags when the latest month's comment rate is {threshold} or more
+      below earlier months.
+    too_few: >
+      Needs two months with at least {min_n} responses each; {months_ok}
+      qualify (largest month: {n}).
     finding:
       text: >
         Fewer people are writing a "{field_label}": {late_rate} in
@@ -201,17 +252,23 @@ checks:
         The comment rate returns to {target_pct} or higher next quarter.
     no_finding:
       text: >
-        The share of people writing comments has stayed steady (n = {n}).
+        The latest month's comment rate is not {threshold} or more below
+        earlier months ({n} responses in months with at least {min_n}).
 
   H:
     question: Is any session outside the funnel limits?
     decision: >
-      Review this session's context (audience, setting, logistics) with the
-      presenter
+      Review this session's context (audience, setting, logistics) with
+      the presenter?
     lever: presenter_coaching
     secondary_lever: scheduling_format
-    owner_role: Training Supervisor
+    owner_role: Presenter support
     confirmed: false
+    rule: >
+      Flags a session outside the {threshold} limits for its size, i.e.
+      unlikely to be chance.
+    too_few: >
+      No session has at least {min_n} answers (largest session: {n}).
     finding:
       text: >
         Session {session_label} ({n} responses) scored {session_value} on
@@ -227,18 +284,23 @@ checks:
         before the next session in {county}.
     no_finding:
       text: >
-        All sessions with at least {min_n} responses are within the usual
-        range for their size.
+        All sessions with at least {min_n} answers are inside the
+        {threshold} limits for their size.
 
   I:
     question: Do flagged rushed answers move the headline numbers?
     decision: >
-      Report headline with or without flagged rows; give participants more
-      time?
+      Report headline numbers without flagged answers, and give
+      participants more time?
     lever: funder_reporting
     secondary_lever: survey_design
-    owner_role: Evaluation Lead
+    owner_role: Survey and evaluation
     confirmed: false
+    rule: >
+      Flags when leaving out flagged answers moves a headline number by
+      {threshold} or more ({threshold_nps} for NPS).
+    too_few: >
+      Only {n} answers to compare headline numbers; needs {min_n}.
     finding:
       text: >
         Leaving out {flagged_n} rushed or patterned answers ({flagged_pct} of
@@ -252,15 +314,20 @@ checks:
         says whether flagged answers are included.
     no_finding:
       text: >
-        Rushed or patterned answers ({flagged_n} of {n}) do not change the
-        headline numbers.
+        Leaving out {flagged_n} flagged answers (of {n}) moves no headline
+        number by {threshold} or more.
 
   J:
     question: Are people asking questions the training didn't answer?
-    decision: Add these topics to the curriculum or a handout/FAQ?
+    decision: Add these topics to the session or a handout/FAQ?
     lever: curriculum_content
-    owner_role: Curriculum Lead
+    owner_role: Curriculum
     confirmed: false
+    rule: >
+      Flags when {threshold} or more of comments ask a question the training
+      may not have answered.
+    too_few: >
+      Only {n} comments; needs {min_n}.
     finding:
       text: >
         {question_n} of {comment_n} comments ask a question the training may
@@ -273,5 +340,5 @@ checks:
         quarter.
     no_finding:
       text: >
-        Few comments ask questions the training didn't answer
-        ({question_n} of {comment_n}).
+        {question_n} of {comment_n} comments ask a question the training may
+        not have answered, under the {threshold} line.

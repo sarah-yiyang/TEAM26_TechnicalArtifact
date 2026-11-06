@@ -24,6 +24,8 @@ from pipeline.trends import alerts, monthly
 
 SAMPLE_PATH = ROOT / "data" / "sample_30rows.xlsx"
 PREVIEW_ROWS = 20
+# Widget keys whose values must survive while their section is hidden.
+PERSISTED_KEYS = ("exclude_flagged", "m3_metric", "m3_by", "m4_owner")
 BAR_COLOR = "#2a78d6"
 ACCENT_COLOR = "#eb6834"
 MUTED_COLOR = "rgba(128,128,128,0.6)"
@@ -69,14 +71,14 @@ HEADING_CSS = """<style>
 [data-testid="stMain"] h4 {font-size: 1.05rem; font-weight: 600; color: #555;}
 .section-tag {font-size: 0.8rem; font-weight: 600; letter-spacing: 0.06em;
   text-transform: uppercase; color: #2a78d6; margin: 2.2rem 0 -1.6rem 0;}
-[data-testid="stMain"] h2 {scroll-margin-top: 4.5rem;}
-.sidenav {display: flex; flex-direction: column; gap: 2px; margin-bottom: 0.5rem;}
-.sidenav a, .sidenav .nav-off {padding: 7px 12px; border-radius: 8px; font-size: 0.95rem;
-  text-decoration: none; border-left: 3px solid transparent;}
-.sidenav a {color: #31333f; font-weight: 500;}
-.sidenav a:hover {background: rgba(42,120,214,0.10); color: #2a78d6; border-left-color: #2a78d6;}
-.sidenav .nav-off {color: #a3a8b0; cursor: default;}
-.sidenav .nav-num {display: inline-block; width: 1.4rem; color: #8a8f98; font-size: 0.85rem;}
+.st-key-section [role="radiogroup"] {gap: 2px;}
+.st-key-section [role="radiogroup"] label {width: 100%; margin: 0; padding: 7px 12px;
+  border-radius: 8px; border-left: 3px solid transparent; cursor: pointer;}
+.st-key-section [role="radiogroup"] label > div:first-child {display: none;}
+.st-key-section [role="radiogroup"] label:hover {background: rgba(42,120,214,0.08);}
+.st-key-section [role="radiogroup"] label:has(input:checked) {
+  background: rgba(42,120,214,0.12); border-left-color: #2a78d6;}
+.st-key-section [role="radiogroup"] label:has(input:checked) p {color: #2a78d6; font-weight: 600;}
 </style>"""
 
 
@@ -136,17 +138,21 @@ def _section(milestone: int) -> None:
     st.caption(blurb)
 
 
-def _nav(linked: set[int]) -> None:
-    """Sidebar section list: linked sections jump to their header, the rest are greyed out."""
-    items = []
-    for n, (title, _) in SECTIONS.items():
-        label = f'<span class="nav-num">{n}</span>{title}'
-        if n in linked:
-            items.append(f'<a href="#section-{n}" target="_self">{label}</a>')
-        else:
-            items.append(f'<span class="nav-off" title="Coming in milestone {n}">{label}</span>')
-    st.subheader("Sections")
-    st.markdown(f'<nav class="sidenav">{"".join(items)}</nav>', unsafe_allow_html=True)
+def _nav(available: list[int]) -> int:
+    """Sidebar section picker; returns the one section to show in the main area."""
+    if st.session_state.get("section") not in available:
+        st.session_state["section"] = available[0]
+    later = {m for m, _, _ in LATER_MILESTONES}
+    return st.radio(
+        "Sections", available, key="section",
+        format_func=lambda n: f"{n}  {SECTIONS[n][0]}" + ("  · coming soon" if n in later else ""),
+    )
+
+
+def _flag_note(exclude: bool) -> None:
+    """Remind the reader which rows feed this section; the toggle lives in Headline results."""
+    state = "left out" if exclude else "included"
+    st.caption(f"Flagged responses are {state}. Change this in {SECTIONS[2][0]}.")
 
 
 def _placeholder(milestone: int, title: str, text: str, part: str | None = None) -> None:
@@ -657,12 +663,16 @@ CHART_SECTIONS = {
     "session_funnel": "Sessions compared with the average", "headline": "Headline numbers",
     "keep_fix_add": "Comment board (section 5, coming soon)",
 }
-RESULT_TEXT = {
-    "finding": "Found something: see card above",
+RESULT_TEXT = {           # also the row order in Checks run
+    "finding": "Found something",
     "no_finding": "✓ No issue",
-    "too_few": "Not enough responses",
-    "not_collected": "Question not in this file",
-    "needs_themes": "Waiting: needs comment themes (milestone 5)",
+    "too_few": "Not enough data",
+    "not_collected": "Not in this file",
+    "needs_themes": "Waiting",
+}
+RESULT_DETAIL = {
+    "not_collected": "The questions this check needs are not in this file.",
+    "needs_themes": "Runs once comments are sorted into themes (milestone 5).",
 }
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
@@ -672,38 +682,64 @@ def _tag(text: str, color: str) -> str:
 
 
 def _show_card(c: dict[str, Any]) -> None:
-    """One insight card: what we found, the decision it feeds, options, measure."""
+    """One insight card: choice to make, suggested action, evidence, details, owner."""
     st.markdown(f'<div id="card-{c["id"]}"></div>', unsafe_allow_html=True)
     with st.container(border=True):
-        st.markdown(f"#### {c['title']}")
+        st.caption("To decide")
+        st.markdown(f"#### {c['decision']}")
         tags = [_tag(c["lever"].replace("_", " "), "blue") if c["lever"]
                 else _tag("no lever set", "gray")]
         if c.get("secondary_lever"):
             tags.append(_tag(c["secondary_lever"].replace("_", " "), "violet"))
-        tags += [_tag(f"{c['confidence']} evidence", "green"), _tag(f"{c['priority']} priority", "orange")]
+        tags += [_tag(f"{c['priority']} priority", "orange")]
         st.markdown(" ".join(tags))
-        st.write(c["text"])
-        st.caption(f"n = {c['n']}")
-        st.write(f"Decision: {c['decision']}")
-        st.write(f"Options to consider: {c['action'] or 'none configured'}")
-        st.write(f"How we'd know: {c['success_measure'] or 'none configured'}")
-        notes = [f"Chart: see '{CHART_SECTIONS.get(c['chart_key'], c['chart_key'])}'."]
-        if c["owner_role"] != "Not assigned" and not c.get("confirmed"):
-            notes.append("Owner role not yet confirmed by EveryMind.")
-        st.caption(" ".join(notes))
+
+        st.markdown("###### 1. Suggested action")
+        st.write(c["action"] or "No suggested action set up for this check in config/decisions.yaml.")
+
+        st.markdown("###### 2. Evidence")
+        chart = CHART_SECTIONS.get(c["chart_key"], c["chart_key"])
+        st.markdown("\n".join([
+            f"- Check run: {c['title']}",
+            f"- What we found: {c['text']}",
+            f"- How we'd know it worked: {c['success_measure'] or 'not set up'}",
+            f"- Chart: see '{chart}' above",
+        ]))
+
+        st.markdown("###### 3. Details")
+        st.caption(f"n = {c['n']} · {c['confidence']} evidence (strong = n ≥ 100, moderate = "
+                   f"n ≥ 50, thin = below 50) · {c['priority']} priority · check {c['id']}")
+
+        st.markdown("###### 4. Responsibility area")
+        where = f"config/decisions.yaml, check {c['id']}"
+        if c["owner_role"] == "Not assigned":
+            st.write("Not assigned.")
+            st.caption(f"To assign: add an entry for check {c['id']} with an owner_role (area of responsibility) in "
+                       "config/decisions.yaml.")
+        elif c.get("confirmed"):
+            st.write(f"{c['owner_role']} (confirmed)")
+        else:
+            st.write(f"{c['owner_role']} (not yet confirmed by EveryMind)")
+            st.caption(f"To confirm: in {where}, check owner_role names the right area of responsibility, then "
+                       "change confirmed: false to confirmed: true.")
 
 
 def _show_insights(cards: list[dict[str, Any]], runs: list[dict[str, Any]],
                    errors: list[str]) -> None:
-    """Cards grouped by owner role, then the list of every check run."""
+    """Cards grouped by area of responsibility, then the list of every check run."""
     owners = sorted({c["owner_role"] for c in cards},
                     key=lambda o: (o == "Not assigned",
                                    min(PRIORITY_ORDER[c["priority"]] for c in cards
                                        if c["owner_role"] == o), o))
     shown: set[str] = set()
     if cards:
-        pick = st.selectbox("Show cards for", ["Everyone"] + owners, key="m4_owner")
-        for owner in owners if pick == "Everyone" else [pick]:
+        pick = st.selectbox("Show cards for area", ["All areas"] + owners, index=None,
+                            placeholder="Choose an area", key="m4_owner")
+        if pick is None:
+            nc, na = len(cards), len(owners)
+            st.caption(f"{nc} card{'s' * (nc != 1)} across {na} area{'s' * (na != 1)}. "
+                       "Choose an area to see them.")
+        for owner in [] if pick is None else owners if pick == "All areas" else [pick]:
             mine = [c for c in cards if c["owner_role"] == owner]
             st.subheader(f"{owner} ({len(mine)})")
             for c in mine:
@@ -712,20 +748,20 @@ def _show_insights(cards: list[dict[str, Any]], runs: list[dict[str, Any]],
     else:
         st.info("No check found anything to act on in this data.")
 
-    st.subheader("Checks run")
-    lines = ["| Check | Question | Result | Details |", "|---|---|---|---|"]
-    for x in runs:
-        details = ""
-        if x["result"] == "no_finding" and x["text"]:
-            details = x["text"]
-        elif x["result"] in ("finding", "too_few") and x["n"]:
-            details = f"n = {x['n']}"
-        result = RESULT_TEXT[x["result"]]
-        if x["result"] == "finding":
-            result = (f"[Found something: go to card ↑](#card-{x['id']})" if x["id"] in shown
-                      else "Found something: card hidden by the owner filter")
-        lines.append(f"| {x['id']} | {x['question']} | {result} | {details} |")
-    st.markdown("\n".join(lines))
+    with st.expander("Checks run"):
+        st.caption("Every check runs on every upload. Rule = what makes a check flag, so any "
+                   "result can be verified against the charts above. Checks that need more "
+                   "data say what fell short.")
+        lines = ["| Check | Question | Result | What we saw | Rule |", "|---|---|---|---|---|"]
+        ordered = sorted(runs, key=lambda x: (list(RESULT_TEXT).index(x["result"]), x["id"]))
+        for x in ordered:
+            result = RESULT_TEXT[x["result"]]
+            if x["result"] == "finding":
+                result = (f"[{result}: go to card ↑](#card-{x['id']})" if x["id"] in shown
+                          else f"{result} (card hidden by the area filter)")
+            seen = x["text"] or RESULT_DETAIL.get(x["result"], "")
+            lines.append(f"| {x['id']} | {x['question']} | {result} | {seen} | {x.get('rule') or ''} |")
+        st.markdown("\n".join(lines))
 
     problems = list(dict.fromkeys(errors + [f"{x['id']}: {g}" for x in runs
                                             for g in x["config_gaps"]]))
@@ -739,9 +775,13 @@ def main() -> None:
     """Build the page."""
     st.set_page_config(page_title="988 Training Insights", layout="wide")
     st.markdown(HEADING_CSS, unsafe_allow_html=True)
+    # Widgets in hidden sections are not drawn; re-store their values so they survive.
+    for key in PERSISTED_KEYS:
+        if key in st.session_state:
+            st.session_state[key] = st.session_state[key]
 
     with st.sidebar:
-        nav_slot = st.container()   # filled once we know which sections render
+        nav_slot = st.container()   # filled once we know which sections can show
         has_data = bool(st.session_state.get("use_sample") or st.session_state.get("uploads"))
         with st.expander("Survey files", expanded=not has_data, icon=":material/upload_file:"):
             uploads = st.file_uploader(
@@ -770,36 +810,38 @@ def main() -> None:
         return
 
     cleaned = result["clean"]
-    built = set(SECTIONS) - {m for m, _, _ in LATER_MILESTONES}
     with nav_slot:
-        _nav({1} if cleaned is None else built)
+        pick = _nav([1] if cleaned is None else list(SECTIONS))
 
-    _section(1)
-    _show_data_check(result)
-    if cleaned is None:
+    if pick == 1:
+        _section(1)
+        _show_data_check(result)
+        return
+    if pick in {m for m, _, _ in LATER_MILESTONES}:
+        _section(pick)
+        _, title, text = next(x for x in LATER_MILESTONES if x[0] == pick)
+        _placeholder(pick, title, text)
         return
 
-    _section(2)
-    exclude = _flag_toggle(result["flags"])
+    exclude = bool(st.session_state.get("exclude_flagged", False))
     metrics = result["metrics"][exclude]
-    _show_results(result["flags"], metrics, exclude)
-
     df = drop_flagged(cleaned) if exclude else cleaned
-    _section(3)
-    _show_comparisons(df)
-
-    _section(4)
-    decisions = _load_decisions(str(DECISIONS_PATH))
-    cards, runs = run_checks(
-        {"headline": metrics, "all": result["metrics"][False], "unflagged": result["metrics"][True]},
-        {"session_id": compare(df, "session_id", CHECK_METRIC), "metric": CHECK_METRIC},
-        {"monthly": monthly(df, CHECK_METRIC), "metric": CHECK_METRIC, "alerts": alerts(df)},
-        None, decisions)
-    _show_insights(cards, runs, validate_decisions(decisions))
-
-    for milestone, title, text in LATER_MILESTONES:
-        _section(milestone)
-        _placeholder(milestone, title, text)
-
+    _section(pick)
+    if pick == 2:
+        exclude = _flag_toggle(result["flags"])
+        _show_results(result["flags"], result["metrics"][exclude], exclude)
+    elif pick == 3:
+        _flag_note(exclude)
+        _show_comparisons(df)
+    elif pick == 4:
+        _flag_note(exclude)
+        decisions = _load_decisions(str(DECISIONS_PATH))
+        cards, runs = run_checks(
+            {"headline": metrics, "all": result["metrics"][False],
+             "unflagged": result["metrics"][True]},
+            {"session_id": compare(df, "session_id", CHECK_METRIC), "metric": CHECK_METRIC},
+            {"monthly": monthly(df, CHECK_METRIC), "metric": CHECK_METRIC, "alerts": alerts(df)},
+            None, decisions)
+        _show_insights(cards, runs, validate_decisions(decisions))
 
 main()

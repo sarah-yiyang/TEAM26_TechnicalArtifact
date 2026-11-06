@@ -50,6 +50,7 @@ def test_app_shows_mapping_and_cleaning() -> None:
 def test_app_shows_m2_headline_and_toggle() -> None:
     at = AppTest.from_file(APP)
     at.session_state["use_sample"] = True
+    at.session_state["section"] = 2
     at.run(timeout=30)
     assert not at.exception
     labels = [e.label for e in at.expander]
@@ -71,6 +72,7 @@ def test_app_shows_m2_headline_and_toggle() -> None:
 def test_app_shows_m3_sections() -> None:
     at = AppTest.from_file(APP)
     at.session_state["use_sample"] = True
+    at.session_state["section"] = 3
     at.run(timeout=30)
     assert not at.exception
     labels = [e.label for e in at.expander]
@@ -86,43 +88,69 @@ def test_app_shows_m3_sections() -> None:
     for metric in ("nps", "likely_call.pct_high", "delivery_agree_pct", "mean_change.when"):
         at.selectbox(key="m3_metric").set_value(metric).run(timeout=30)
         assert not at.exception
-    at.toggle[0].set_value(True).run(timeout=30)
-    assert not at.exception
+    assert any("Flagged responses are included" in c.value for c in at.caption)
 
 
 def test_app_shows_m4_insights() -> None:
     at = AppTest.from_file(APP)
     at.session_state["use_sample"] = True
+    at.session_state["section"] = 4
     at.run(timeout=30)
     assert not at.exception
     assert "What to act on" in [h.value for h in at.header]
-    assert "Checks run" in [h.value for h in at.subheader]
+    assert any(e.label == "Checks run" for e in at.expander)
     text = " ".join(m.value for m in at.markdown)
-    assert "needs comment themes" in text                  # F and J until M5
+    assert "Runs once comments are sorted into themes" in text   # F and J until M5
+    assert "Only 9 people answered both" in text                 # B: says what fell short
     assert "Coming in milestone 4" not in text
     assert not any("decisions.yaml needs attention" in w.value for w in at.warning)
 
 
-def _nav_html(at: AppTest) -> str:
-    return " ".join(m.value for m in at.markdown if 'class="sidenav"' in m.value)
+def _sample(section: int | None = None) -> AppTest:
+    at = AppTest.from_file(APP)
+    at.session_state["use_sample"] = True
+    if section is not None:
+        at.session_state["section"] = section
+    return at.run(timeout=30)
 
 
 def test_app_nav_hidden_without_data() -> None:
     at = AppTest.from_file(APP).run(timeout=30)
     assert not at.exception
-    assert _nav_html(at) == ""
+    assert len(at.radio) == 0
 
 
-def test_app_nav_links_match_sections() -> None:
-    at = AppTest.from_file(APP)
-    at.session_state["use_sample"] = True
-    at.run(timeout=30)
+def test_app_nav_lists_every_section_and_starts_on_data_check() -> None:
+    at = _sample()
     assert not at.exception
-    nav = _nav_html(at)
-    for n in (1, 2, 3, 4):
-        assert f'href="#section-{n}"' in nav
-    for n in (5, 6):
-        assert f'href="#section-{n}"' not in nav
-        assert f"Coming in milestone {n}" in nav
-    anchors = {h.proto.anchor for h in at.header}
-    assert {f"section-{n}" for n in range(1, 7)} <= anchors
+    assert at.radio(key="section").options == ["1  Data check", "2  Headline results",
+                                               "3  Comparisons and trends", "4  What to act on",
+                                               "5  Comment board  · coming soon",
+                                               "6  Summary  · coming soon"]
+    assert [h.value for h in at.header] == ["Data check"]
+
+
+def test_app_shows_only_the_picked_section() -> None:
+    at = _sample()
+    for n, title in ((2, "Headline results"), (3, "Comparisons and trends"),
+                     (4, "What to act on"), (1, "Data check")):
+        at.radio(key="section").set_value(n).run(timeout=30)
+        assert not at.exception
+        assert [h.value for h in at.header] == [title]
+
+
+def test_app_unbuilt_section_shows_placeholder() -> None:
+    at = _sample(5)
+    assert not at.exception
+    assert [h.value for h in at.header] == ["Comment board"]
+    assert any("Coming in milestone 5" in m.value for m in at.markdown)
+
+
+def test_app_flag_toggle_carries_to_other_sections() -> None:
+    at = _sample(2)
+    at.toggle(key="exclude_flagged").set_value(True).run(timeout=30)
+    at.radio(key="section").set_value(4).run(timeout=30)
+    assert not at.exception
+    assert any("Flagged responses are left out" in c.value for c in at.caption)
+    at.radio(key="section").set_value(2).run(timeout=30)
+    assert at.toggle(key="exclude_flagged").value is True
