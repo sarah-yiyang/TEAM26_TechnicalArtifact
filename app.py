@@ -53,6 +53,23 @@ LATER_MILESTONES: list[tuple[int, str, str]] = [
     (5, "Comment board", "Comments sorted into Keep / Fix / Add themes."),
     (6, "Summary", "A copy-ready written summary of the findings."),
 ]
+SECTIONS: dict[int, tuple[str, str]] = {
+    1: ("Data check", "What was loaded, how columns were matched, and what was fixed."),
+    2: ("Headline results", "Overall numbers for everyone in the data."),
+    3: ("Comparisons and trends", "Groups, sessions, and months side by side."),
+    4: ("What to act on", "Insight checks run on this data, and what they found."),
+    5: ("Comment board", "What people said they valued, would fix, or want added."),
+    6: ("Summary", "A copy-ready write-up of the findings."),
+}
+# Make the three heading levels easy to tell apart: section > subsection > label.
+HEADING_CSS = """<style>
+[data-testid="stMain"] h1 {font-size: 2.4rem; font-weight: 800;}
+[data-testid="stMain"] h2 {font-size: 1.9rem; font-weight: 750; margin-top: 2.2rem;}
+[data-testid="stMain"] h3 {font-size: 1.3rem; font-weight: 650; margin-top: 1rem;}
+[data-testid="stMain"] h4 {font-size: 1.05rem; font-weight: 600; color: #555;}
+.section-tag {font-size: 0.8rem; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #2a78d6; margin: 2.2rem 0 -1.6rem 0;}
+</style>"""
 
 
 # ----- loading (cached on file contents) ------------------------------
@@ -102,6 +119,14 @@ def _load_decisions(path: str) -> dict[str, Any]:
 
 
 # ----- display helpers ------------------------------------------------
+
+def _section(milestone: int) -> None:
+    """Top-level section header for one milestone, with a divider and short blurb."""
+    title, blurb = SECTIONS[milestone]
+    st.markdown(f'<div class="section-tag">Section {milestone}</div>', unsafe_allow_html=True)
+    st.header(title, divider="blue")
+    st.caption(blurb)
+
 
 def _placeholder(milestone: int, title: str, text: str, part: str | None = None) -> None:
     """Grey 'coming soon' box for features not built yet."""
@@ -195,7 +220,7 @@ def _show_mapping(mapping: dict[str, Any]) -> None:
 def _show_cleaning(fix_log: list[dict[str, Any]], unknown: list[dict[str, Any]]) -> None:
     """Fixes made to answers, and answers that were not recognized."""
     st.subheader("Fixes and unknown values")
-    st.markdown("**Fixes made**")
+    st.markdown("#### Fixes made")
     if fix_log:
         st.dataframe(
             pd.DataFrame([
@@ -209,7 +234,7 @@ def _show_cleaning(fix_log: list[dict[str, Any]], unknown: list[dict[str, Any]])
     else:
         st.success("✓ No fixes were needed.")
 
-    st.markdown("**Unknown values**")
+    st.markdown("#### Unknown values")
     if unknown:
         st.warning(
             "These answers were not recognized, so they were left blank in the results. "
@@ -299,7 +324,8 @@ def _show_headline(m: dict[str, dict[str, Any]]) -> None:
 
 def _show_knowledge(m: dict[str, dict[str, Any]]) -> None:
     """Before/after table for the three knowledge items."""
-    st.markdown("**Before and after, by knowledge item** (self-reported retrospective change)")
+    st.subheader("Before and after, by knowledge item")
+    st.caption("Self-reported retrospective change.")
     rows = []
     for k, label in KNOWLEDGE_LABELS.items():
         rows.append({
@@ -524,7 +550,7 @@ CHART_SECTIONS = {
     "intent_drivers": "Headline numbers", "gain_by_baseline": "Change by starting level",
     "data_health": "Data health", "trend_comments": "Data health",
     "session_funnel": "Sessions compared with the average", "headline": "Headline numbers",
-    "keep_fix_add": "Comment board (milestone 5)",
+    "keep_fix_add": "Comment board (section 5, coming soon)",
 }
 RESULT_TEXT = {
     "finding": "found something, see card above",
@@ -545,7 +571,7 @@ def _tag(text: str, color: str) -> str:
 def _show_card(c: dict[str, Any]) -> None:
     """One insight card: what we found, the decision it feeds, options, measure."""
     with st.container(border=True):
-        st.markdown(f"##### {c['title']}")
+        st.markdown(f"#### {c['title']}")
         tags = [_tag(c["lever"].replace("_", " "), "blue") if c["lever"]
                 else _tag("no lever set", "gray")]
         if c.get("secondary_lever"):
@@ -557,7 +583,7 @@ def _show_card(c: dict[str, Any]) -> None:
         st.write(f"Decision: {c['decision']}")
         st.write(f"Options to consider: {c['action'] or 'none configured'}")
         st.write(f"How we'd know: {c['success_measure'] or 'none configured'}")
-        notes = [f"Chart: see '{CHART_SECTIONS.get(c['chart_key'], c['chart_key'])}' above."]
+        notes = [f"Chart: see '{CHART_SECTIONS.get(c['chart_key'], c['chart_key'])}'."]
         if c["owner_role"] != "Not assigned" and not c.get("confirmed"):
             notes.append("Owner role not yet confirmed by EveryMind.")
         st.caption(" ".join(notes))
@@ -566,7 +592,6 @@ def _show_card(c: dict[str, Any]) -> None:
 def _show_insights(cards: list[dict[str, Any]], runs: list[dict[str, Any]],
                    errors: list[str]) -> None:
     """Cards grouped by owner role, then the list of every check run."""
-    st.header("What to act on")
     owners = sorted({c["owner_role"] for c in cards},
                     key=lambda o: (o == "Not assigned",
                                    min(PRIORITY_ORDER[c["priority"]] for c in cards
@@ -603,16 +628,17 @@ def _show_insights(cards: list[dict[str, Any]], runs: list[dict[str, Any]],
 def main() -> None:
     """Build the page."""
     st.set_page_config(page_title="988 Training Insights", layout="wide")
+    st.markdown(HEADING_CSS, unsafe_allow_html=True)
 
     with st.sidebar:
-        st.title("988 Training Insights")
+        st.subheader("Survey files")
         uploads = st.file_uploader(
             "Survey exports (.xlsx or .csv)", type=["xlsx", "csv"], accept_multiple_files=True
         )
         use_sample = st.checkbox("Use sample data", key="use_sample")
         st.caption("Files are processed in this session only and are never saved.")
 
-    st.header("Survey data check")
+    st.title("988 Training Insights")
     st.write("Upload one or more post-training survey exports. Several files are combined into one.")
 
     if use_sample and uploads:
@@ -631,6 +657,8 @@ def main() -> None:
         return
 
     stats, raw, cleaned = result["stats"], result["raw"], result["clean"]
+
+    _section(1)
     _show_counts(stats)
     _show_files(stats)
     _show_health(stats)
@@ -638,30 +666,6 @@ def main() -> None:
     if cleaned is None:
         return
     _show_cleaning(result["fix_log"], result["unknown"])
-    exclude = _show_flags(result["flags"])
-    metrics = result["metrics"][exclude]
-    _show_headline(metrics)
-    _show_knowledge(metrics)
-    _show_know_call(metrics)
-    _show_gain(metrics)
-
-    df = drop_flagged(cleaned) if exclude else cleaned
-    st.header("Comparisons and trends")
-    metric = st.selectbox("Measure", list(METRIC_LABELS),
-                          format_func=lambda k: METRIC_LABELS[k][0], key="m3_metric")
-    _show_compare(df, metric)
-    _show_funnel(df, metric)
-    _show_trend(df, metric)
-    _show_alerts(df)
-
-    decisions = _load_decisions(str(DECISIONS_PATH))
-    cards, runs = run_checks(
-        {"headline": metrics, "all": result["metrics"][False], "unflagged": result["metrics"][True]},
-        {"session_id": compare(df, "session_id", CHECK_METRIC), "metric": CHECK_METRIC},
-        {"monthly": monthly(df, CHECK_METRIC), "metric": CHECK_METRIC, "alerts": alerts(df)},
-        None, decisions)
-    _show_insights(cards, runs, validate_decisions(decisions))
-
     st.subheader("Preview")
     n = min(PREVIEW_ROWS, len(raw))
     tab_clean, tab_raw = st.tabs(["Cleaned", "As exported"])
@@ -672,8 +676,34 @@ def main() -> None:
         st.caption(f"First {n} of {len(raw)} rows, exactly as in the file(s).")
         st.dataframe(raw.head(PREVIEW_ROWS), width="stretch")
 
-    st.subheader("Still to come")
+    _section(2)
+    exclude = _show_flags(result["flags"])
+    metrics = result["metrics"][exclude]
+    _show_headline(metrics)
+    _show_knowledge(metrics)
+    _show_know_call(metrics)
+    _show_gain(metrics)
+
+    df = drop_flagged(cleaned) if exclude else cleaned
+    _section(3)
+    metric = st.selectbox("Measure", list(METRIC_LABELS),
+                          format_func=lambda k: METRIC_LABELS[k][0], key="m3_metric")
+    _show_compare(df, metric)
+    _show_funnel(df, metric)
+    _show_trend(df, metric)
+    _show_alerts(df)
+
+    _section(4)
+    decisions = _load_decisions(str(DECISIONS_PATH))
+    cards, runs = run_checks(
+        {"headline": metrics, "all": result["metrics"][False], "unflagged": result["metrics"][True]},
+        {"session_id": compare(df, "session_id", CHECK_METRIC), "metric": CHECK_METRIC},
+        {"monthly": monthly(df, CHECK_METRIC), "metric": CHECK_METRIC, "alerts": alerts(df)},
+        None, decisions)
+    _show_insights(cards, runs, validate_decisions(decisions))
+
     for milestone, title, text in LATER_MILESTONES:
+        _section(milestone)
         _placeholder(milestone, title, text)
 
 
