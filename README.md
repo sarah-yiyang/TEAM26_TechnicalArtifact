@@ -10,7 +10,7 @@ Question: How can EveryMind use its 988 training feedback data to develop an act
 * interactive, live virtual sessions
 
 ## notes about challenge
-* so an automated pipeline may be the best choice cuz they want the thing to be continuous. insights should be reproduciable 
+* automated pipeline may be the best choice cuz they want the thing to be continuous. insights should be reproduciable 
 * actionable! ? so artifact should suggest actions
 * may include that the survey structure should be changed in the first place? post review may ignore bias in the first place
 * limit: AI api...
@@ -41,3 +41,6 @@ idea
 later prompts
 * in app.py; classify which sections are checks which are insights.
 * reorganize layout to emphasize the 3 features
+
+lingering questions
+* you can't really tell difference after a set of new stuff came in. prob need like compare to prev training results option.

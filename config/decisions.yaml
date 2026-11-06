@@ -1,0 +1,277 @@
+# Decision map for insight checks (recommend.py).
+# Staff can edit wording here without touching code.
+#
+# Rules
+# - lever / secondary_lever: curriculum_content, presenter_coaching,
+#   audience_targeting, language_access, scheduling_format, survey_design,
+#   funder_reporting
+# - {placeholders} are filled ONLY from the card's evidence. Values arrive
+#   already formatted (percentages include "%"), so don't add "%" after them.
+# - No number may appear in a template unless it is in allowed_literals.
+# - finding.text = what we found; finding.action = options to consider (not
+#   instructions); finding.success_measure = how we'd know it worked.
+# - owner_role is a placeholder until EveryMind confirms it (confirmed: false).
+#   Leave a check out entirely if nobody owns it: the card shows "Not assigned".
+
+version: 1
+
+allowed_literals: ["988", "911"]     # service names, not statistics
+
+labels:
+  metrics:
+    agree_pct.post_when: know when to use 988 (agree)
+    mean_change.when: self-reported change in knowing when to use 988
+    nps: would-recommend score (NPS)
+    likely_call.pct_high: very likely to call 988
+    delivery_agree_pct: liked the delivery
+  fields:
+    pre_identify: could identify mental health challenges (before)
+    pre_describe: could describe 988 (before)
+    pre_when: knew when to use 988 (before)
+    post_identify: can identify mental health challenges
+    post_describe: can describe 988
+    post_when: know when to use 988
+    presenter_engaged: presenter engaged participants
+    presenter_knew: presenter knew the subject
+    well_organized: training was well organized
+    nps: would recommend
+    likely_call: likely to call 988
+    comment_valuable: most valuable comment
+    comment_improve: how to improve comment
+  words:
+    above: above
+    below: below
+
+checks:
+  A:
+    question: Did the score change only because the audience changed?
+    decision: Is the trend real or a shift in who we trained?
+    lever: funder_reporting
+    secondary_lever: audience_targeting
+    owner_role: Program Director
+    confirmed: false
+    finding:
+      text: >
+        From {first_month} to {last_month}, "{metric_label}" moved
+        {raw_change}. After accounting for who attended, it moved
+        {adjusted_change} (n = {n_first} and {n_last}). Part of the change
+        may come from training a different mix of people rather than from
+        the training itself.
+      action: >
+        Consider showing both the as-reported and the adjusted line whenever
+        this trend is reported.
+      success_measure: >
+        The next report shows both lines side by side, and they differ by
+        less than {target_gap}.
+    no_finding:
+      text: >
+        The "{metric_label}" trend looks the same with or without adjusting
+        for who attended (n = {n}).
+
+  B:
+    question: Do people know when to use 988 but still wouldn't call?
+    decision: >
+      Does the curriculum address why people hesitate to call
+      (what happens, confidentiality, 911 vs 988)?
+    lever: curriculum_content
+    owner_role: Curriculum Lead
+    confirmed: false
+    finding:
+      text: >
+        {gap_pct} of respondents ({gap_n} of {n}) say they know when to use
+        988 but rated their chance of calling {call_cutoff} or lower (out of
+        {call_max}).
+      action: >
+        Consider adding content on what holds people back: what happens when
+        you call, confidentiality, and when to call 911 vs 988.
+      success_measure: >
+        The share who know when to use 988 but wouldn't call falls below
+        {target_pct} next quarter, with at least {min_n} responses.
+    no_finding:
+      text: >
+        Most people who know when to use 988 also say they would call
+        (n = {n}).
+
+  C:
+    question: Is delivery more linked to intent to call than knowledge?
+    decision: Should we invest in presenter coaching/observation?
+    lever: presenter_coaching
+    owner_role: Training Supervisor
+    confirmed: false
+    finding:
+      text: >
+        How the session was delivered is more closely linked to people's
+        willingness to call than what they learned (link strength
+        {delivery_link} vs {knowledge_link}; higher means more closely
+        linked; n = {n}). The strongest delivery item was
+        "{top_delivery_item}".
+      action: >
+        Consider whether presenter coaching or peer observation is worth
+        investing in.
+      success_measure: >
+        "Liked the delivery" rises from {delivery_agree_pct} to {target_pct}
+        next quarter.
+    no_finding:
+      text: >
+        Delivery is not more closely linked to willingness to call than
+        knowledge is (n = {n}).
+
+  D:
+    question: Were many already at the top before training?
+    decision: >
+      Do some audiences need a more advanced version, or does the
+      pre-question need rewording?
+    lever: audience_targeting
+    secondary_lever: survey_design
+    owner_role: Curriculum Lead
+    confirmed: false
+    finding:
+      text: >
+        {ceiling_pct} of respondents (n = {n}) already gave the top score on
+        "{item_label}" before training, so the survey can't show growth for
+        them.
+      action: >
+        Options: offer a more advanced version for audiences who start high,
+        or reword the before-training question so answers spread out more.
+      success_measure: >
+        Fewer than {target_pct} of respondents start at the top score on
+        "{item_label}" in the next survey round.
+    no_finding:
+      text: >
+        Few respondents were already at the top score before training
+        (n = {n}).
+
+  E:
+    question: Is a score low only because answers are blank?
+    decision: Fix survey layout or required fields?
+    lever: survey_design
+    owner_role: Evaluation Lead
+    confirmed: false
+    finding:
+      text: >
+        In {month}, {blank_pct} of answers to "{question_label}" were left
+        blank (n = {n}). A low score there may reflect missing answers rather
+        than opinion.
+      action: >
+        Consider checking how that question appears on the survey, or making
+        it required.
+      success_measure: >
+        Blank answers to "{question_label}" fall below {target_pct} next
+        month.
+    no_finding:
+      text: >
+        No question has an unusual share of blank answers in any month
+        (n = {n}).
+
+  F:
+    question: Are unhappy respondents silent about why?
+    decision: Add a follow-up question for low scorers?
+    lever: survey_design
+    owner_role: Evaluation Lead
+    confirmed: false
+    finding:
+      text: >
+        {silent_pct} of people who gave a low rating ({low_cutoff} or below;
+        {low_n} people) left no comment explaining why.
+      action: >
+        Consider adding a short follow-up question that appears only after a
+        low rating.
+      success_measure: >
+        Low raters who leave no comment fall below {target_pct} after the
+        change.
+    no_finding:
+      text: >
+        Most people who gave a low rating also explained why (n = {low_n}).
+
+  G:
+    question: Are fewer people writing comments?
+    decision: Change when/how the survey is given?
+    lever: survey_design
+    owner_role: Evaluation Lead
+    confirmed: false
+    finding:
+      text: >
+        Fewer people are writing a "{field_label}": {late_rate} in
+        {late_month} (n = {n_late}) vs {early_rate} in earlier months
+        (n = {n_early}).
+      action: >
+        Consider whether the timing or format of the survey changed, for
+        example being handed out as people are leaving.
+      success_measure: >
+        The comment rate returns to {target_pct} or higher next quarter.
+    no_finding:
+      text: >
+        The share of people writing comments has stayed steady (n = {n}).
+
+  H:
+    question: Is any session outside the funnel limits?
+    decision: >
+      Review this session's context (audience, setting, logistics) with the
+      presenter
+    lever: presenter_coaching
+    secondary_lever: scheduling_format
+    owner_role: Training Supervisor
+    confirmed: false
+    finding:
+      text: >
+        Session {session_label} ({n} responses) scored {session_value} on
+        "{metric_label}", {limit_side} the usual range for a session of its
+        size (typical: {centre}). Many things can explain this, such as the
+        audience, room, time of day, or logistics.
+      action: >
+        Consider reviewing the session's context together with the presenter
+        to learn what was different and whether it is worth repeating or
+        adjusting.
+      success_measure: >
+        A context review with the presenter is held and notes are recorded
+        before the next session in {county}.
+    no_finding:
+      text: >
+        All sessions with at least {min_n} responses are within the usual
+        range for their size.
+
+  I:
+    question: Do flagged rushed answers move the headline numbers?
+    decision: >
+      Report headline with or without flagged rows; give participants more
+      time?
+    lever: funder_reporting
+    secondary_lever: survey_design
+    owner_role: Evaluation Lead
+    confirmed: false
+    finding:
+      text: >
+        Leaving out {flagged_n} rushed or patterned answers ({flagged_pct} of
+        {n}) changes "{metric_label}" from {with_flags} to {without_flags}.
+      action: >
+        Consider stating in reports which version is used. If many were
+        completed very quickly, giving participants a few more minutes may
+        help.
+      success_measure: >
+        Flagged answers fall below {target_pct} next quarter, and each report
+        says whether flagged answers are included.
+    no_finding:
+      text: >
+        Rushed or patterned answers ({flagged_n} of {n}) do not change the
+        headline numbers.
+
+  J:
+    question: Are people asking questions the training didn't answer?
+    decision: Add these topics to the curriculum or a handout/FAQ?
+    lever: curriculum_content
+    owner_role: Curriculum Lead
+    confirmed: false
+    finding:
+      text: >
+        {question_n} of {comment_n} comments ask a question the training may
+        not have answered. The most common topic was "{top_topic}"
+        ({top_topic_n} comments).
+      action: >
+        Consider covering it in the session or in a handout/FAQ.
+      success_measure: >
+        Questions about "{top_topic}" fall below {target_n} comments next
+        quarter.
+    no_finding:
+      text: >
+        Few comments ask questions the training didn't answer
+        ({question_n} of {comment_n}).

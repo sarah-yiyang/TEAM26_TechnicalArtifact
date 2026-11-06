@@ -18,6 +18,7 @@ from pipeline.ingest import load_files
 from pipeline.mapping import map_columns
 from pipeline.metrics import compute, drop_flagged
 from pipeline.quality import add_flags, flag_summary
+from pipeline.recommend import CHECK_METRIC, DECISIONS_PATH, load_decisions, run_checks, validate_decisions
 from pipeline.segments import NOT_RECORDED, compare
 from pipeline.trends import alerts, monthly
 
@@ -49,7 +50,6 @@ KNOWLEDGE_LABELS = {"identify": "Can identify mental health challenges",
                     "when": "Knows when to use 988"}
 
 LATER_MILESTONES: list[tuple[int, str, str]] = [
-    (4, "Insight cards", "Automatic checks on the data, with the evidence behind each finding."),
     (5, "Comment board", "Comments sorted into Keep / Fix / Add themes."),
     (6, "Summary", "A copy-ready written summary of the findings."),
 ]
@@ -93,6 +93,12 @@ def _load_uploads(payload: tuple[tuple[str, bytes], ...]) -> dict[str, Any]:
 def _load_sample(path: str) -> dict[str, Any]:
     """Run the pipeline on the bundled 30-row sample."""
     return _run_pipeline([path])
+
+
+@st.cache_data
+def _load_decisions(path: str) -> dict[str, Any]:
+    """Read config/decisions.yaml once per session."""
+    return load_decisions(path)
 
 
 # ----- display helpers ------------------------------------------------
@@ -510,6 +516,88 @@ def _show_alerts(df: pd.DataFrame) -> None:
         st.success("✓ Checked: comment rate has not dropped in the latest month.")
 
 
+# ----- M4: insight cards ------------------------------------------------
+
+CHART_SECTIONS = {
+    "trend_adjusted": "Monthly trend, adjusted for who attended",
+    "know_call_2x2": "Know when to use 988 vs. likely to call",
+    "intent_drivers": "Headline numbers", "gain_by_baseline": "Change by starting level",
+    "data_health": "Data health", "trend_comments": "Data health",
+    "session_funnel": "Sessions compared with the average", "headline": "Headline numbers",
+    "keep_fix_add": "Comment board (milestone 5)",
+}
+RESULT_TEXT = {
+    "finding": "found something, see card above",
+    "no_finding": "checked, no issue",
+    "too_few": "too few responses to check",
+    "not_collected": "not collected in this file",
+    "needs_themes": "needs comment themes (coming in milestone 5)",
+}
+RESULT_ICON = {"finding": "●", "no_finding": "✓", "too_few": "–", "not_collected": "–",
+               "needs_themes": "…"}
+PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def _tag(text: str, color: str) -> str:
+    return f":{color}-background[{text}]"
+
+
+def _show_card(c: dict[str, Any]) -> None:
+    """One insight card: what we found, the decision it feeds, options, measure."""
+    with st.container(border=True):
+        st.markdown(f"##### {c['title']}")
+        tags = [_tag(c["lever"].replace("_", " "), "blue") if c["lever"]
+                else _tag("no lever set", "gray")]
+        if c.get("secondary_lever"):
+            tags.append(_tag(c["secondary_lever"].replace("_", " "), "violet"))
+        tags += [_tag(f"{c['confidence']} evidence", "green"), _tag(f"{c['priority']} priority", "orange")]
+        st.markdown(" ".join(tags))
+        st.write(c["text"])
+        st.caption(f"n = {c['n']}")
+        st.write(f"Decision: {c['decision']}")
+        st.write(f"Options to consider: {c['action'] or 'none configured'}")
+        st.write(f"How we'd know: {c['success_measure'] or 'none configured'}")
+        notes = [f"Chart: see '{CHART_SECTIONS.get(c['chart_key'], c['chart_key'])}' above."]
+        if c["owner_role"] != "Not assigned" and not c.get("confirmed"):
+            notes.append("Owner role not yet confirmed by EveryMind.")
+        st.caption(" ".join(notes))
+
+
+def _show_insights(cards: list[dict[str, Any]], runs: list[dict[str, Any]],
+                   errors: list[str]) -> None:
+    """Cards grouped by owner role, then the list of every check run."""
+    st.header("What to act on")
+    owners = sorted({c["owner_role"] for c in cards},
+                    key=lambda o: (o == "Not assigned",
+                                   min(PRIORITY_ORDER[c["priority"]] for c in cards
+                                       if c["owner_role"] == o), o))
+    if cards:
+        pick = st.selectbox("Show cards for", ["Everyone"] + owners, key="m4_owner")
+        for owner in owners if pick == "Everyone" else [pick]:
+            mine = [c for c in cards if c["owner_role"] == owner]
+            st.subheader(f"{owner} ({len(mine)})")
+            for c in mine:
+                _show_card(c)
+    else:
+        st.info("No check found anything to act on in this data.")
+
+    st.subheader("Checks run")
+    lines = []
+    for x in runs:
+        line = f"{RESULT_ICON[x['result']]} {x['id']} · {x['question']}: {RESULT_TEXT[x['result']]}"
+        if x["result"] == "no_finding" and x["text"]:
+            line += f". {x['text']}"
+        elif x["result"] == "too_few" and x["n"]:
+            line += f" (n = {x['n']})"
+        lines.append(f"- {line}")
+    st.markdown("\n".join(lines))
+
+    problems = list(dict.fromkeys(errors + [f"{x['id']}: {g}" for x in runs
+                                            for g in x["config_gaps"]]))
+    if problems:
+        st.warning("decisions.yaml needs attention:\n" + "\n".join(f"- {p}" for p in problems))
+
+
 # ----- page -----------------------------------------------------------
 
 def main() -> None:
@@ -565,6 +653,14 @@ def main() -> None:
     _show_funnel(df, metric)
     _show_trend(df, metric)
     _show_alerts(df)
+
+    decisions = _load_decisions(str(DECISIONS_PATH))
+    cards, runs = run_checks(
+        {"headline": metrics, "all": result["metrics"][False], "unflagged": result["metrics"][True]},
+        {"session_id": compare(df, "session_id", CHECK_METRIC), "metric": CHECK_METRIC},
+        {"monthly": monthly(df, CHECK_METRIC), "metric": CHECK_METRIC, "alerts": alerts(df)},
+        None, decisions)
+    _show_insights(cards, runs, validate_decisions(decisions))
 
     st.subheader("Preview")
     n = min(PREVIEW_ROWS, len(raw))

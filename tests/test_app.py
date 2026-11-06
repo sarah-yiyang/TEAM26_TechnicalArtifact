@@ -87,3 +87,16 @@ def test_app_shows_m3_sections() -> None:
         assert not at.exception
     at.toggle[0].set_value(True).run(timeout=30)
     assert not at.exception
+
+
+def test_app_shows_m4_insights() -> None:
+    at = AppTest.from_file(APP)
+    at.session_state["use_sample"] = True
+    at.run(timeout=30)
+    assert not at.exception
+    assert "What to act on" in [h.value for h in at.header]
+    assert "Checks run" in [h.value for h in at.subheader]
+    text = " ".join(m.value for m in at.markdown)
+    assert "needs comment themes" in text                  # F and J until M5
+    assert "Coming in milestone 4" not in text
+    assert not any("decisions.yaml needs attention" in w.value for w in at.warning)
