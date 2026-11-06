@@ -9,18 +9,24 @@ import io
 from typing import Any
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from pipeline import ROOT, load_schema
 from pipeline.cleaning import clean
 from pipeline.ingest import load_files
 from pipeline.mapping import map_columns
+from pipeline.metrics import compute
+from pipeline.quality import add_flags, flag_summary
 
 SAMPLE_PATH = ROOT / "data" / "sample_30rows.xlsx"
 PREVIEW_ROWS = 20
+BAR_COLOR = "#2a78d6"
+KNOWLEDGE_LABELS = {"identify": "Can identify mental health challenges",
+                    "describe": "Can describe 988 and how it works",
+                    "when": "Knows when to use 988"}
 
 LATER_MILESTONES: list[tuple[int, str, str]] = [
-    (2, "Headline numbers", "Agree %, NPS, likely to call, before/after change, quality flags."),
     (3, "Comparisons and trends", "Compare by role, county or session; monthly trend adjusted for audience."),
     (4, "Insight cards", "Automatic checks on the data, with the evidence behind each finding."),
     (5, "Comment board", "Comments sorted into Keep / Fix / Add themes."),
@@ -41,7 +47,13 @@ def _run_pipeline(files: list[Any]) -> dict[str, Any]:
     result: dict[str, Any] = {"raw": raw, "stats": stats, "mapping": mapping,
                               "clean": None, "fix_log": [], "unknown": []}
     if not mapping["missing_required"]:
-        result["clean"], result["fix_log"], result["unknown"] = clean(mapped, schema)
+        cleaned, result["fix_log"], result["unknown"] = clean(mapped, schema)
+        result["clean"] = add_flags(cleaned, schema)
+        result["flags"] = flag_summary(result["clean"])
+        result["metrics"] = {
+            False: compute(result["clean"], schema),
+            True: compute(result["clean"], schema, exclude_flagged=True),
+        }
     return result
 
 
@@ -188,6 +200,154 @@ def _show_cleaning(fix_log: list[dict[str, Any]], unknown: list[dict[str, Any]])
         st.success("✓ No unknown values found.")
 
 
+# ----- M2: flags and headline numbers ---------------------------------
+
+def _fmt(m: dict[str, Any], kind: str = "pct") -> str:
+    """Format a metric value, or say why it is not shown."""
+    if m.get("value") is None:
+        status = m.get("status", "not available")
+        return status if status != "too few responses" else f"too few responses (n={m['n']})"
+    v = m["value"]
+    if kind == "pct":
+        return f"{v:.0%}"
+    if kind == "change":
+        return f"{v:+.2f}"
+    if kind == "p":
+        return "p < 0.001" if v < 0.001 else f"p = {v:.3f}"
+    return f"{v:.1f}"
+
+
+def _n(m: dict[str, Any]) -> str:
+    return f"n = {m['n']:,}"
+
+
+def _show_flags(flags: dict[str, dict[str, int]]) -> bool:
+    """Quality-flag counts and the leave-out toggle. Returns the toggle value."""
+    st.subheader("Rushed or doubtful answers")
+    any_ = flags["flag_any"]
+    secs = load_schema()["quality"]["speeder_seconds"]
+    rows = [(f"Finished in under {secs} seconds", "flag_speeder"),
+            ("Same answer to all 9 rating questions", "flag_straightline"),
+            ("Lowest rating on every 'after' item but would recommend (8+)", "flag_reversed")]
+    st.dataframe(
+        pd.DataFrame([{"Check": label, "Flagged": flags[c]["flagged"],
+                       "Could not check (blank answers)": flags[c]["unknown"]}
+                      for label, c in rows]),
+        hide_index=True, width="stretch",
+    )
+    exclude = st.toggle(
+        f"Leave out the {any_['flagged']} flagged responses (of {any_['n']:,})",
+        key="exclude_flagged",
+    )
+    st.caption("Flagged rows are never deleted. \"Could not check\" rows are kept.")
+    return exclude
+
+
+def _show_headline(m: dict[str, dict[str, Any]]) -> None:
+    """Headline tiles; every number shows its n."""
+    st.subheader("Headline numbers")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    post, pre = m["agree_pct.post_when"], m["agree_pct.pre_when"]
+    c1.metric("Know when to use 988", _fmt(post))
+    c1.caption(f"Agree or strongly agree, after training · {_n(post)}. "
+               f"Before (recalled): {_fmt(pre)}.")
+    ch = m["mean_change.when"]
+    c2.metric("Self-reported change", _fmt(ch, "change"))
+    c2.caption(f"'Know when to use 988', 1–5 scale, after minus recalled before · "
+               f"{_n(ch)} · {_fmt(m['wilcoxon_p.when'], 'p')}. Retrospective, not proof of impact.")
+    nps = m["nps"]
+    c3.metric("Would recommend (NPS)", _fmt(nps, "num"))
+    ci = (f"95% range {nps['ci95'][0]:.1f} to {nps['ci95'][1]:.1f}"
+          if nps.get("ci95") else "")
+    c3.caption(f"−100 to +100 · {_n(nps)}. {ci}")
+    call, cov = m["likely_call.pct_high"], m["likely_call.coverage"]
+    c4.metric("Very likely to call 988", _fmt(call))
+    answered = (f" Answered by {cov['answered']:,} of {cov['n']:,} ({_fmt(cov)})."
+                if cov.get("value") is not None else "")
+    c4.caption(f"Rated 9–10 out of 10 · {_n(call)}.{answered}")
+    dl = m["delivery_agree_pct"]
+    c5.metric("Liked the delivery", _fmt(dl))
+    c5.caption(f"Agreed with all 3 presenter / organization items · {_n(dl)}.")
+
+
+def _show_knowledge(m: dict[str, dict[str, Any]]) -> None:
+    """Before/after table for the three knowledge items."""
+    st.markdown("**Before and after, by knowledge item** (self-reported retrospective change)")
+    rows = []
+    for k, label in KNOWLEDGE_LABELS.items():
+        rows.append({
+            "Item": label,
+            "Agree before": _fmt(m[f"agree_pct.pre_{k}"]),
+            "Agree after": _fmt(m[f"agree_pct.post_{k}"]),
+            "Average change (1–5)": _fmt(m[f"mean_change.{k}"], "change"),
+            "Went down": _fmt(m[f"declined_pct.{k}"]),
+            "Already at top before": _fmt(m[f"ceiling_pct.{k}"]),
+            "n": m[f"mean_change.{k}"]["n"],
+        })
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+
+def _show_know_call(m: dict[str, dict[str, Any]]) -> None:
+    """2x2 of knowing when to use 988 vs being very likely to call."""
+    st.subheader("Know when to use 988 vs. likely to call")
+    grid, gap = m["know_call_2x2"], m["know_call_gap"]
+    if grid.get("value") is None:
+        st.info(f"Not shown: {_fmt(grid)}.")
+        return
+    cells = grid["value"]
+    st.caption(f"People who answered both questions · {_n(grid)}. "
+               "'Very likely' = 9–10 out of 10.")
+    head, c1, c2 = st.columns([1.2, 1, 1])
+    c1.markdown("**Very likely to call**")
+    c2.markdown("**Not very likely (0–8)**")
+    head, c1, c2 = st.columns([1.2, 1, 1])
+    head.markdown("**Knows when to use 988**")
+    c1.metric("Knows · very likely", cells["knows_and_calls"], label_visibility="collapsed")
+    c2.metric("Knows · not very likely", cells["knows_not_calls"],
+              label_visibility="collapsed")
+    head, c1, c2 = st.columns([1.2, 1, 1])
+    head.markdown("**Not sure when to use 988**")
+    c1.metric("Not sure · very likely", cells["not_knows_calls"],
+              label_visibility="collapsed")
+    c2.metric("Not sure · not very likely", cells["not_knows_not_calls"],
+              label_visibility="collapsed")
+    st.markdown(f"**{_fmt(gap)}** know when to use 988 but are not very likely to call "
+                f"({cells['knows_not_calls']} of {gap['n']}).")
+
+
+def _show_gain(m: dict[str, dict[str, Any]]) -> None:
+    """Average change by starting (recalled before) level."""
+    st.subheader("Change by starting level")
+    k = st.selectbox("Knowledge item", list(KNOWLEDGE_LABELS),
+                     format_func=KNOWLEDGE_LABELS.get, key="gain_item")
+    table = m[f"gain_by_baseline.{k}"]
+    if table.get("value") is None:
+        st.info(f"Not shown: {_fmt(table)}.")
+        return
+    levels = sorted(table["value"])
+    cells = [table["value"][lv] for lv in levels]
+    x = [f"Started at {lv}" + (" (top)" if lv == max(levels) else "")
+         + f"<br>n = {c['n']}" + ("<br>too few" if c["value"] is None else "")
+         for lv, c in zip(levels, cells)]
+    y = [c["value"] for c in cells]
+    fig = go.Figure(go.Bar(
+        x=x, y=y, marker_color=BAR_COLOR, marker_cornerradius=4,
+        customdata=[c["n"] for c in cells],
+        hovertemplate="%{x}<br>Average change: %{y:+.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        height=320, margin=dict(l=10, r=10, t=10, b=10), bargap=0.45, showlegend=False,
+        yaxis=dict(title="Average change (1–5 scale)", zeroline=True, zerolinewidth=1,
+                   gridcolor="rgba(128,128,128,0.15)"),
+        xaxis=dict(showgrid=False),
+    )
+    st.plotly_chart(fig, width="stretch", key="gain_chart")
+    top = m[f"ceiling_pct.{k}"]
+    st.caption(f"Total {_n(table)}. People who started high have little room to go up; "
+               f"{_fmt(top)} were already at the top before ({_n(top)}). "
+               "Self-reported retrospective change.")
+
+
 # ----- page -----------------------------------------------------------
 
 def main() -> None:
@@ -228,6 +388,12 @@ def main() -> None:
     if cleaned is None:
         return
     _show_cleaning(result["fix_log"], result["unknown"])
+    exclude = _show_flags(result["flags"])
+    metrics = result["metrics"][exclude]
+    _show_headline(metrics)
+    _show_knowledge(metrics)
+    _show_know_call(metrics)
+    _show_gain(metrics)
 
     st.subheader("Preview")
     n = min(PREVIEW_ROWS, len(raw))
