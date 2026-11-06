@@ -69,6 +69,14 @@ HEADING_CSS = """<style>
 [data-testid="stMain"] h4 {font-size: 1.05rem; font-weight: 600; color: #555;}
 .section-tag {font-size: 0.8rem; font-weight: 600; letter-spacing: 0.06em;
   text-transform: uppercase; color: #2a78d6; margin: 2.2rem 0 -1.6rem 0;}
+[data-testid="stMain"] h2 {scroll-margin-top: 4.5rem;}
+.sidenav {display: flex; flex-direction: column; gap: 2px; margin-bottom: 0.5rem;}
+.sidenav a, .sidenav .nav-off {padding: 7px 12px; border-radius: 8px; font-size: 0.95rem;
+  text-decoration: none; border-left: 3px solid transparent;}
+.sidenav a {color: #31333f; font-weight: 500;}
+.sidenav a:hover {background: rgba(42,120,214,0.10); color: #2a78d6; border-left-color: #2a78d6;}
+.sidenav .nav-off {color: #a3a8b0; cursor: default;}
+.sidenav .nav-num {display: inline-block; width: 1.4rem; color: #8a8f98; font-size: 0.85rem;}
 </style>"""
 
 
@@ -124,8 +132,21 @@ def _section(milestone: int) -> None:
     """Top-level section header for one milestone, with a divider and short blurb."""
     title, blurb = SECTIONS[milestone]
     st.markdown(f'<div class="section-tag">Section {milestone}</div>', unsafe_allow_html=True)
-    st.header(title, divider="blue")
+    st.header(title, divider="blue", anchor=f"section-{milestone}")
     st.caption(blurb)
+
+
+def _nav(linked: set[int]) -> None:
+    """Sidebar section list: linked sections jump to their header, the rest are greyed out."""
+    items = []
+    for n, (title, _) in SECTIONS.items():
+        label = f'<span class="nav-num">{n}</span>{title}'
+        if n in linked:
+            items.append(f'<a href="#section-{n}" target="_self">{label}</a>')
+        else:
+            items.append(f'<span class="nav-off" title="Coming in milestone {n}">{label}</span>')
+    st.subheader("Sections")
+    st.markdown(f'<nav class="sidenav">{"".join(items)}</nav>', unsafe_allow_html=True)
 
 
 def _placeholder(milestone: int, title: str, text: str, part: str | None = None) -> None:
@@ -469,7 +490,6 @@ def _val(v: Any, kind: str) -> str:
 
 def _show_compare(df: pd.DataFrame, metric: str) -> None:
     """Table of one measure by the chosen group."""
-    st.subheader("Compare groups")
     st.write("One measure, split into groups, so you can see which group scores higher or lower.")
     by = st.selectbox("Compare by", list(GROUP_LABELS), format_func=GROUP_LABELS.get,
                       key="m3_by")
@@ -496,7 +516,6 @@ def _show_compare(df: pd.DataFrame, metric: str) -> None:
 
 def _show_funnel(df: pd.DataFrame, metric: str) -> None:
     """Session funnel: each session against limits that widen for small sessions."""
-    st.subheader("Sessions compared with the average")
     st.write("Each dot is one session. A dot outside the grey lines scored unusually high or "
              "low; small sessions get wider lines because their scores swing more by chance.")
     label, kind = METRIC_LABELS[metric]
@@ -549,7 +568,6 @@ def _show_funnel(df: pd.DataFrame, metric: str) -> None:
 
 def _show_trend(df: pd.DataFrame, metric: str) -> None:
     """Monthly trend, raw and adjusted for role mix."""
-    st.subheader("Monthly trend, adjusted for who attended")
     st.write("Orange: the score each month as measured. Blue: the score if every month had the "
              "same mix of roles. If only orange moves, the change came from who attended.")
     label, kind = METRIC_LABELS[metric]
@@ -613,6 +631,22 @@ def _show_alert_list(found: list[dict[str, Any]]) -> None:
         st.success("✓ Checked: comment rate has not dropped in the latest month.")
 
 
+def _show_comparisons(df: pd.DataFrame) -> None:
+    """Section 3: one Measure picker for the three charts, each in its own dropdown."""
+    metric = st.selectbox("Measure", list(METRIC_LABELS),
+                          format_func=lambda k: METRIC_LABELS[k][0], key="m3_metric")
+    st.caption("This measure is used by the three dropdowns below. Data health checks "
+               "every question, so it does not change with the measure.")
+    label = METRIC_LABELS[metric][0]
+    with st.expander(f"Compare groups · {label}"):
+        _show_compare(df, metric)
+    with st.expander(f"Sessions compared with the average · {label}"):
+        _show_funnel(df, metric)
+    with st.expander(f"Monthly trend, adjusted for who attended · {label}"):
+        _show_trend(df, metric)
+    _show_alerts(df)
+
+
 # ----- M4: insight cards ------------------------------------------------
 
 CHART_SECTIONS = {
@@ -624,14 +658,12 @@ CHART_SECTIONS = {
     "keep_fix_add": "Comment board (section 5, coming soon)",
 }
 RESULT_TEXT = {
-    "finding": "found something, see card above",
-    "no_finding": "checked, no issue",
-    "too_few": "too few responses to check",
-    "not_collected": "not collected in this file",
-    "needs_themes": "needs comment themes (coming in milestone 5)",
+    "finding": "Found something: see card above",
+    "no_finding": "✓ No issue",
+    "too_few": "Not enough responses",
+    "not_collected": "Question not in this file",
+    "needs_themes": "Waiting: needs comment themes (milestone 5)",
 }
-RESULT_ICON = {"finding": "●", "no_finding": "✓", "too_few": "–", "not_collected": "–",
-               "needs_themes": "…"}
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
@@ -641,6 +673,7 @@ def _tag(text: str, color: str) -> str:
 
 def _show_card(c: dict[str, Any]) -> None:
     """One insight card: what we found, the decision it feeds, options, measure."""
+    st.markdown(f'<div id="card-{c["id"]}"></div>', unsafe_allow_html=True)
     with st.container(border=True):
         st.markdown(f"#### {c['title']}")
         tags = [_tag(c["lever"].replace("_", " "), "blue") if c["lever"]
@@ -667,6 +700,7 @@ def _show_insights(cards: list[dict[str, Any]], runs: list[dict[str, Any]],
                     key=lambda o: (o == "Not assigned",
                                    min(PRIORITY_ORDER[c["priority"]] for c in cards
                                        if c["owner_role"] == o), o))
+    shown: set[str] = set()
     if cards:
         pick = st.selectbox("Show cards for", ["Everyone"] + owners, key="m4_owner")
         for owner in owners if pick == "Everyone" else [pick]:
@@ -674,18 +708,23 @@ def _show_insights(cards: list[dict[str, Any]], runs: list[dict[str, Any]],
             st.subheader(f"{owner} ({len(mine)})")
             for c in mine:
                 _show_card(c)
+                shown.add(c["id"])
     else:
         st.info("No check found anything to act on in this data.")
 
     st.subheader("Checks run")
-    lines = []
+    lines = ["| Check | Question | Result | Details |", "|---|---|---|---|"]
     for x in runs:
-        line = f"{RESULT_ICON[x['result']]} {x['id']} · {x['question']}: {RESULT_TEXT[x['result']]}"
+        details = ""
         if x["result"] == "no_finding" and x["text"]:
-            line += f". {x['text']}"
-        elif x["result"] == "too_few" and x["n"]:
-            line += f" (n = {x['n']})"
-        lines.append(f"- {line}")
+            details = x["text"]
+        elif x["result"] in ("finding", "too_few") and x["n"]:
+            details = f"n = {x['n']}"
+        result = RESULT_TEXT[x["result"]]
+        if x["result"] == "finding":
+            result = (f"[Found something: go to card ↑](#card-{x['id']})" if x["id"] in shown
+                      else "Found something: card hidden by the owner filter")
+        lines.append(f"| {x['id']} | {x['question']} | {result} | {details} |")
     st.markdown("\n".join(lines))
 
     problems = list(dict.fromkeys(errors + [f"{x['id']}: {g}" for x in runs
@@ -702,12 +741,15 @@ def main() -> None:
     st.markdown(HEADING_CSS, unsafe_allow_html=True)
 
     with st.sidebar:
-        st.subheader("Survey files")
-        uploads = st.file_uploader(
-            "Survey exports (.xlsx or .csv)", type=["xlsx", "csv"], accept_multiple_files=True
-        )
-        use_sample = st.checkbox("Use sample data", key="use_sample")
-        st.caption("Files are processed in this session only and are never saved.")
+        nav_slot = st.container()   # filled once we know which sections render
+        has_data = bool(st.session_state.get("use_sample") or st.session_state.get("uploads"))
+        with st.expander("Survey files", expanded=not has_data, icon=":material/upload_file:"):
+            uploads = st.file_uploader(
+                "Survey exports (.xlsx or .csv)", type=["xlsx", "csv"],
+                accept_multiple_files=True, key="uploads",
+            )
+            use_sample = st.checkbox("Use sample data", key="use_sample")
+            st.caption("Files are processed in this session only and are never saved.")
 
     st.title("988 Training Insights")
     st.write("Upload one or more post-training survey exports. Several files are combined into one.")
@@ -728,6 +770,9 @@ def main() -> None:
         return
 
     cleaned = result["clean"]
+    built = set(SECTIONS) - {m for m, _, _ in LATER_MILESTONES}
+    with nav_slot:
+        _nav({1} if cleaned is None else built)
 
     _section(1)
     _show_data_check(result)
@@ -741,12 +786,7 @@ def main() -> None:
 
     df = drop_flagged(cleaned) if exclude else cleaned
     _section(3)
-    metric = st.selectbox("Measure", list(METRIC_LABELS),
-                          format_func=lambda k: METRIC_LABELS[k][0], key="m3_metric")
-    _show_compare(df, metric)
-    _show_funnel(df, metric)
-    _show_trend(df, metric)
-    _show_alerts(df)
+    _show_comparisons(df)
 
     _section(4)
     decisions = _load_decisions(str(DECISIONS_PATH))

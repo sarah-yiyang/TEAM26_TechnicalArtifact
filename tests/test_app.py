@@ -73,11 +73,10 @@ def test_app_shows_m3_sections() -> None:
     at.session_state["use_sample"] = True
     at.run(timeout=30)
     assert not at.exception
-    headers = [h.value for h in at.subheader]
+    labels = [e.label for e in at.expander]
     for h in ("Compare groups", "Sessions compared with the average",
-              "Monthly trend, adjusted for who attended"):
-        assert h in headers
-    assert any(e.label.startswith("Data health") for e in at.expander)
+              "Monthly trend, adjusted for who attended", "Data health"):
+        assert any(lbl.startswith(h) for lbl in labels)
     # sample is tiny: every session is hidden rather than scored
     assert any("no session has enough answers" in i.value for i in at.info)
 
@@ -102,3 +101,28 @@ def test_app_shows_m4_insights() -> None:
     assert "needs comment themes" in text                  # F and J until M5
     assert "Coming in milestone 4" not in text
     assert not any("decisions.yaml needs attention" in w.value for w in at.warning)
+
+
+def _nav_html(at: AppTest) -> str:
+    return " ".join(m.value for m in at.markdown if 'class="sidenav"' in m.value)
+
+
+def test_app_nav_hidden_without_data() -> None:
+    at = AppTest.from_file(APP).run(timeout=30)
+    assert not at.exception
+    assert _nav_html(at) == ""
+
+
+def test_app_nav_links_match_sections() -> None:
+    at = AppTest.from_file(APP)
+    at.session_state["use_sample"] = True
+    at.run(timeout=30)
+    assert not at.exception
+    nav = _nav_html(at)
+    for n in (1, 2, 3, 4):
+        assert f'href="#section-{n}"' in nav
+    for n in (5, 6):
+        assert f'href="#section-{n}"' not in nav
+        assert f"Coming in milestone {n}" in nav
+    anchors = {h.proto.anchor for h in at.header}
+    assert {f"section-{n}" for n in range(1, 7)} <= anchors

@@ -39,11 +39,15 @@ idea
 * to explain in business value: staff will save time reading responses. 
 
 lingering changes
-* in app.py; classify which sections are checks which are insights.
+* add a nav bar
+
 * reorganize layout to emphasize the 3 features
-* you can't really tell difference after a set of new stuff came in. prob need like compare to prev training results option.
+* you can't really tell difference after a set of new stuff came in.  need a comparison mode: compare to prev training results. program input: same dataset, input cutoff date. output: comparison of metrics. name current mode cumulative overview.
 
 ## key ai decisions
 * cleanup app.py
 * deleting some sections, recognized that app.py includes repeated info because i wanted to see app.py running after every milestones where m4 builds on top of m2 and m3; only m4 should really be kept.
 * original graphs are difficult to understand... changing.
+
+## learned
+* need to start the product (app.py) from business perspective first so layout is friendly to targeted audience
