@@ -318,3 +318,52 @@ analysis:
     - language
     - month
     - session_id                     # date_county; used by the session funnel
+# ---------------------------------------------------------------------
+# Comment themes (pipeline/themes.py), keyword rules only (M5a).
+# Matching ignores case, extra spaces and accents ("Español" = "espanol").
+# A phrase matches at the start of a word and may run on, so
+# "translat" matches "translation" and "tech" matches "technical".
+#
+# Kind, checked in this order:
+#   1. empty          whole answer (punctuation removed) is blank or in `empty`
+#   2. open_question  contains a `question_contains` phrase, or (only in
+#                     `question_starts.fields`) starts with a question word
+#                     not followed by "to" ("How the calls go" yes, "How to" no)
+#   3. suggestion / praise   phrase lists, only in `overrides_fields`
+#   4. default_by_field
+# Topic: first topic below with a matching phrase; otherwise "Other".
+# Empty comments always get topic "Other".
+# ---------------------------------------------------------------------
+themes:
+  comment_fields: [comment_valuable, comment_improve]
+  kinds:
+    empty: ["nothing", "none", "no", "n/a", "na", "nope", "no comment",
+            "no comments", "not sure", "nada", "ninguno", "ninguna"]
+    question_contains: ["?"]
+    question_starts:
+      fields: [comment_improve]
+      words: ["what", "how", "why", "is there", "are there", "can", "does"]
+    overrides_fields: [comment_improve]
+    suggestion_contains: ["should", "could", "would be better", "wish",
+                          "mejor si", "seria mejor"]
+    praise_contains: ["great", "awesome", "good", "excellent", "well organized",
+                      "loved", "helpful", "bien", "excelente", "gracias"]
+    default_by_field:
+      comment_valuable: praise      # "most valuable thing" = something to keep
+      comment_improve: suggestion
+  topics:
+    "Confidentiality/anonymity": ["confidential", "anonymous", "privacy", "history", "parents"]
+    "911 vs 988": ["911", "emergency", "emergencia"]
+    "What happens when you call": ["what happens", "calls usually go", "who answers",
+                                   "want help", "text 988"]
+    "More interaction/examples": ["interactive", "activity", "example", "role play", "scenario"]
+    "Language access": ["spanish", "espanol", "translat", "interpreter", "language"]
+    "More detail/content": ["more detail", "more info", "statistics", "how many", "resources"]
+    "Careers at 988": ["career", "job", "volunteer", "hiring"]
+    "Logistics/format": ["time management", "tech", "video", "audio", "too long", "schedule"]
+    "Positive/no change": ["awesome", "great", "well organized", "muy bien", "no change"]
+  other_topic: "Other"
+  board:                            # Keep / Fix / Add columns of the comment board
+    Keep: praise
+    Fix: suggestion
+    Add: open_question

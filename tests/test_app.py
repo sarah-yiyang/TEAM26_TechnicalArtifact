@@ -100,7 +100,7 @@ def test_app_shows_m4_insights() -> None:
     assert "What to act on" in [h.value for h in at.header]
     assert any(e.label == "Checks run" for e in at.expander)
     text = " ".join(m.value for m in at.markdown)
-    assert "Runs once comments are sorted into themes" in text   # F and J until M5
+    assert "Runs once comments are sorted into themes" not in text   # F and J run from M5
     assert "Only 9 people answered both" in text                 # B: says what fell short
     assert "Coming in milestone 4" not in text
     assert not any("decisions.yaml needs attention" in w.value for w in at.warning)
@@ -125,7 +125,7 @@ def test_app_nav_lists_every_section_and_starts_on_data_check() -> None:
     assert not at.exception
     assert at.radio(key="section").options == ["1  Data check", "2  Headline results",
                                                "3  Comparisons and trends", "4  What to act on",
-                                               "5  Comment board  · coming soon",
+                                               "5  Comment board",
                                                "6  Summary  · coming soon"]
     assert [h.value for h in at.header] == ["Data check"]
 
@@ -140,10 +140,20 @@ def test_app_shows_only_the_picked_section() -> None:
 
 
 def test_app_unbuilt_section_shows_placeholder() -> None:
+    at = _sample(6)
+    assert not at.exception
+    assert [h.value for h in at.header] == ["Summary"]
+    assert any("Coming in milestone 6" in m.value for m in at.markdown)
+
+
+def test_app_shows_comment_board() -> None:
     at = _sample(5)
     assert not at.exception
     assert [h.value for h in at.header] == ["Comment board"]
-    assert any("Coming in milestone 5" in m.value for m in at.markdown)
+    subs = [s.value for s in at.subheader]
+    assert subs == ["Keep · n = 22", "Fix · n = 5", "Add · n = 5"]
+    assert any("keyword rules" in c.value for c in at.caption)
+    assert len(at.dataframe) == 3
 
 
 def test_app_flag_toggle_carries_to_other_sections() -> None:

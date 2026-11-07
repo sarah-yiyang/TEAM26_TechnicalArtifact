@@ -20,6 +20,7 @@ from pipeline.metrics import compute, drop_flagged
 from pipeline.quality import add_flags, flag_summary
 from pipeline.recommend import CHECK_METRIC, DECISIONS_PATH, load_decisions, run_checks, validate_decisions
 from pipeline.segments import NOT_RECORDED, compare
+from pipeline.themes import board, check_input, classify_df
 from pipeline.trends import alerts, monthly
 
 SAMPLE_PATH = ROOT / "data" / "sample_30rows.xlsx"
@@ -52,7 +53,6 @@ KNOWLEDGE_LABELS = {"identify": "Can identify mental health challenges",
                     "when": "Knows when to use 988"}
 
 LATER_MILESTONES: list[tuple[int, str, str]] = [
-    (5, "Comment board", "Comments sorted into Keep / Fix / Add themes."),
     (6, "Summary", "A copy-ready written summary of the findings."),
 ]
 SECTIONS: dict[int, tuple[str, str]] = {
@@ -655,14 +655,6 @@ def _show_comparisons(df: pd.DataFrame) -> None:
 
 # ----- M4: insight cards ------------------------------------------------
 
-CHART_SECTIONS = {
-    "trend_adjusted": "Monthly trend, adjusted for who attended",
-    "know_call_2x2": "Know when to use 988 vs. likely to call",
-    "intent_drivers": "Headline numbers", "gain_by_baseline": "What changed for each person",
-    "data_health": "Data health", "trend_comments": "Data health",
-    "session_funnel": "Sessions compared with the average", "headline": "Headline numbers",
-    "keep_fix_add": "Comment board (section 5, coming soon)",
-}
 RESULT_TEXT = {           # also the row order in Checks run
     "finding": "Found something",
     "no_finding": "✓ No issue",
@@ -672,7 +664,7 @@ RESULT_TEXT = {           # also the row order in Checks run
 }
 RESULT_DETAIL = {
     "not_collected": "The questions this check needs are not in this file.",
-    "needs_themes": "Runs once comments are sorted into themes (milestone 5).",
+    "needs_themes": "Needs the comment questions, which are not in this file.",
 }
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
@@ -698,12 +690,10 @@ def _show_card(c: dict[str, Any]) -> None:
         st.write(c["action"] or "No suggested action set up for this check in config/decisions.yaml.")
 
         st.markdown("###### 2. Evidence")
-        chart = CHART_SECTIONS.get(c["chart_key"], c["chart_key"])
         st.markdown("\n".join([
             f"- Check run: {c['title']}",
             f"- What we found: {c['text']}",
             f"- How we'd know it worked: {c['success_measure'] or 'not set up'}",
-            f"- Chart: see '{chart}' above",
         ]))
 
         st.markdown("###### 3. Details")
@@ -767,6 +757,35 @@ def _show_insights(cards: list[dict[str, Any]], runs: list[dict[str, Any]],
                                             for g in x["config_gaps"]]))
     if problems:
         st.warning("decisions.yaml needs attention:\n" + "\n".join(f"- {p}" for p in problems))
+
+
+# ----- M5: comment board -------------------------------------------------
+
+BOARD_HELP = {"Keep": "What people valued or praised.",
+              "Fix": "Suggested changes.",
+              "Add": "Questions the training left open."}
+
+
+def _show_board(classified: pd.DataFrame) -> None:
+    """Section 5: Keep / Fix / Add topic counts. No quotes are shown."""
+    if classified.empty:
+        st.info("This file has no comment questions, so there is nothing to sort.")
+        return
+    said = int((classified["kind"] != "empty").sum())
+    st.caption(f"{said} written comments sorted (n = {len(classified)} answer boxes; "
+               f"{len(classified) - said} were blank or said 'nothing'). "
+               "Method: keyword rules from config/schema.yaml, so topics are rough. "
+               "Comments that match no rule are counted under Other.")
+    cols = st.columns(3)
+    for col, (name, items) in zip(cols, board(classified, load_schema()).items()):
+        with col:
+            st.subheader(f"{name} · n = {sum(x['n'] for x in items)}")
+            st.caption(BOARD_HELP.get(name, ""))
+            if not items:
+                st.write("No comments.")
+                continue
+            table = pd.DataFrame(items).rename(columns={"topic": "Topic", "n": "Comments"})
+            st.dataframe(table, hide_index=True, width="stretch")
 
 
 # ----- page -----------------------------------------------------------
@@ -833,15 +852,20 @@ def main() -> None:
     elif pick == 3:
         _flag_note(exclude)
         _show_comparisons(df)
+    elif pick == 5:
+        _flag_note(exclude)
+        _show_board(classify_df(df, load_schema()))
     elif pick == 4:
         _flag_note(exclude)
+        schema = load_schema()
+        themes = check_input(classify_df(df, schema), df, schema)
         decisions = _load_decisions(str(DECISIONS_PATH))
         cards, runs = run_checks(
             {"headline": metrics, "all": result["metrics"][False],
              "unflagged": result["metrics"][True]},
             {"session_id": compare(df, "session_id", CHECK_METRIC), "metric": CHECK_METRIC},
             {"monthly": monthly(df, CHECK_METRIC), "metric": CHECK_METRIC, "alerts": alerts(df)},
-            None, decisions)
+            themes, decisions)
         _show_insights(cards, runs, validate_decisions(decisions))
 
 main()
