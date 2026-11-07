@@ -186,7 +186,9 @@ def test_card_filled_from_decisions(cid: str, decisions, schema) -> None:
     assert CARD_FIELDS <= set(card)
     assert card["lever"] == entry["lever"] and card["lever"] in LEVERS
     assert card["owner_role"] == entry["owner_role"]
-    assert card["decision"] == " ".join(entry["decision"].split())
+    assert card["decision"] and "{" not in card["decision"]
+    if "{" not in entry["decision"]:
+        assert card["decision"] == " ".join(entry["decision"].split())
     assert card["confirmed"] is False
     for key in ("text", "action", "success_measure"):
         assert card[key] and "{" not in card[key], key

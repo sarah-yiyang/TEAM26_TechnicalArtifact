@@ -5,6 +5,7 @@ functions and shows what they return.
 """
 from __future__ import annotations
 
+import html
 import io
 from typing import Any
 
@@ -79,6 +80,14 @@ HEADING_CSS = """<style>
 .st-key-section [role="radiogroup"] label:has(input:checked) {
   background: rgba(42,120,214,0.12); border-left-color: #2a78d6;}
 .st-key-section [role="radiogroup"] label:has(input:checked) p {color: #2a78d6; font-weight: 600;}
+/* insight cards */
+[class*="st-key-card_"] h4 {color: inherit; font-size: 1.2rem; font-weight: 700;
+  line-height: 1.35; padding-top: 0.1rem;}
+.card-label {font-size: 0.72rem; font-weight: 650; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #2a78d6; margin: 0.4rem 0 0.2rem 0;}
+.card-action {background: rgba(42,120,214,0.08); border-left: 3px solid #2a78d6;
+  border-radius: 6px; padding: 10px 14px; line-height: 1.5;}
+.card-text {line-height: 1.5;}
 </style>"""
 
 
@@ -690,45 +699,52 @@ def _tag(text: str, color: str) -> str:
     return f":{color}-background[{text}]"
 
 
+def _label(text: str) -> None:
+    """Small blue uppercase label above a card part."""
+    st.markdown(f'<div class="card-label">{html.escape(text)}</div>', unsafe_allow_html=True)
+
+
 def _show_card(c: dict[str, Any]) -> None:
-    """One insight card: choice to make, suggested action, evidence, details, owner."""
+    """One insight card: the choice to make, what to consider, the evidence, who owns it."""
     st.markdown(f'<div id="card-{c["id"]}"></div>', unsafe_allow_html=True)
-    with st.container(border=True):
-        st.caption("To decide")
+    with st.container(border=True, key=f"card_{c['id']}"):
+        _label("To decide")
         st.markdown(f"#### {c['decision']}")
-        tags = [_tag(c["lever"].replace("_", " "), "blue") if c["lever"]
-                else _tag("no lever set", "gray")]
+        priority_color = {"high": "red", "medium": "orange", "low": "gray"}[c["priority"]]
+        tags = [_tag(f"{c['priority']} priority", priority_color),
+                _tag(f"{c['confidence']} evidence", "green")]
+        tags.append(_tag(c["lever"].replace("_", " "), "blue") if c["lever"]
+                    else _tag("no lever set", "gray"))
         if c.get("secondary_lever"):
             tags.append(_tag(c["secondary_lever"].replace("_", " "), "violet"))
-        tags += [_tag(f"{c['priority']} priority", "orange")]
         st.markdown(" ".join(tags))
 
-        st.markdown("###### 1. Suggested action")
-        st.write(c["action"] or "No suggested action set up for this check in config/decisions.yaml.")
+        _label("Suggested action")
+        action = c["action"] or "No suggested action set up for this check in config/decisions.yaml."
+        st.markdown(f'<div class="card-action">{html.escape(action)}</div>', unsafe_allow_html=True)
 
-        st.markdown("###### 2. Evidence")
-        st.markdown("\n".join([
-            f"- Check run: {c['title']}",
-            f"- What we found: {c['text']}",
-            f"- Success looks like: {c['success_measure'] or 'not set up'}",
-        ]))
+        found, target = st.columns(2, gap="large")
+        with found:
+            _label("What we found")
+            st.markdown(f'<div class="card-text">{html.escape(c["text"])}</div>',
+                        unsafe_allow_html=True)
+        with target:
+            _label("Success looks like")
+            st.markdown(f'<div class="card-text">{html.escape(c["success_measure"] or "Not set up.")}'
+                        "</div>", unsafe_allow_html=True)
 
-        st.markdown("###### 3. Details")
-        st.caption(f"n = {c['n']} · {c['confidence']} evidence (strong = n ≥ 100, moderate = "
-                   f"n ≥ 50, thin = below 50) · {c['priority']} priority · check {c['id']}")
-
-        st.markdown("###### 4. Responsibility area")
-        where = f"config/decisions.yaml, check {c['id']}"
+        st.divider()
+        st.caption(f"Check {c['id']}: {c['title']} · n = {c['n']} · {c['confidence']} evidence "
+                   "(strong = n ≥ 100, moderate = n ≥ 50, thin = below 50)")
         if c["owner_role"] == "Not assigned":
-            st.write("Not assigned.")
-            st.caption(f"To assign: add an entry for check {c['id']} with an owner_role (area of responsibility) in "
-                       "config/decisions.yaml.")
+            st.caption(f"Responsibility area: not assigned. To assign, add an entry for check "
+                       f"{c['id']} with an owner_role in config/decisions.yaml.")
         elif c.get("confirmed"):
-            st.write(f"{c['owner_role']} (confirmed)")
+            st.caption(f"Responsibility area: {c['owner_role']} (confirmed)")
         else:
-            st.write(f"{c['owner_role']} (not yet confirmed by EveryMind)")
-            st.caption(f"To confirm: in {where}, check owner_role names the right area of responsibility, then "
-                       "change confirmed: false to confirmed: true.")
+            st.caption(f"Responsibility area: {c['owner_role']}, not yet confirmed by EveryMind. "
+                       f"To confirm, in config/decisions.yaml under check {c['id']}, check that "
+                       "owner_role names the right area, then set confirmed: true.")
 
 
 def _show_insights(cards: list[dict[str, Any]], runs: list[dict[str, Any]],
@@ -782,110 +798,108 @@ TREND_STYLE = {"up": ("green", "▲"), "down": ("red", "▼"), "steady": ("gray"
 
 
 def _brief_card(c: dict[str, Any], labels: dict[str, str], compact: bool = False) -> None:
-    """One priority: what we found, the option, who, and what success looks like."""
+    """One priority: what we found, the option, and what success looks like."""
     with st.container(border=True):
         tags = [_tag(c["owner_role"], "blue"), _tag(c["evidence_text"], "gray")]
         if not compact:
             tags.append(_tag(f"{c['priority']} priority", "orange"))
-        st.markdown(" ".join(tags))
         st.markdown(f"##### {c['title']}")
+        st.markdown(" ".join(tags))
         st.write(c["text"])
         for key, label in (("action", "action_label"), ("success_measure", "success_label")):
             if c.get(key):
-                st.caption(labels.get(label, "").rstrip(":"))
-                st.write(c[key])
+                st.caption(f"{labels.get(label, '')} {c[key]}")
 
 
-def _brief_export(brief: dict[str, Any]) -> None:
-    """Copy / download the brief, with the number check result."""
+def _brief_export(brief: dict[str, Any], copy_slot: Any, download_slot: Any) -> None:
+    """Copy / download buttons; a warning only if a number could not be traced."""
     text, ok, stray = to_text(brief)
-    left, right = st.columns(2)
-    with left.popover("Show text to copy", icon=":material/content_copy:", width="stretch"):
+    with copy_slot.popover("Copy text", icon=":material/content_copy:", width="stretch"):
         st.caption("Use the copy button in the top-right corner of the box. "
                    "Paste into an email, memo or report.")
+        if ok:
+            st.caption("✓ Every number was traced to the data or the settings file.")
         st.code(text, language="markdown", wrap_lines=True)
-    right.download_button("Download as .md", text, file_name=f"988_brief_{brief['audience']}.md",
-                          icon=":material/download:", width="stretch")
-    if ok:
-        st.caption("✓ Every number in this brief was traced to the data or the settings file.")
-    else:
+    download_slot.download_button("Download .md", text, file_name=f"988_brief_{brief['audience']}.md",
+                                  icon=":material/download:", width="stretch")
+    if not ok:
         st.warning("These numbers could not be traced to the data: " + ", ".join(stray))
 
 
+def _brief_scorecard(tiles: list[dict[str, Any]]) -> None:
+    """Goal tiles, three per row: value, then n and trend in small print."""
+    for row in range(0, len(tiles), 3):
+        for col, t in zip(st.columns(3), tiles[row:row + 3]):
+            with col.container(border=True):
+                st.metric(t["label"], t["value_text"])
+                if t.get("trend_text"):
+                    color, mark = TREND_STYLE.get(t["trend"], ("gray", "·"))
+                    st.markdown(f":{color}[{mark} {t['trend_text']}]")
+                if t.get("n_text"):
+                    st.caption(" · ".join([t["n_text"], *t["notes"]]))
+
+
 def _show_brief(brief: dict[str, Any]) -> None:
-    """Section 6: the Program Brief, block by block, in the order a reader needs it."""
+    """Section 6 body: bottom line always visible, scorecard open, the rest in dropdowns."""
     h, blurbs, labels = brief["headings"], brief["blurbs"], brief["labels"]
     if brief["problems"]:
         st.warning("decisions.yaml (brief:) needs attention:\n"
                    + "\n".join(f"- {p}" for p in brief["problems"]))
-    _brief_export(brief)
-    st.markdown(f"### {brief['title']}")
     if brief.get("intro"):
         st.caption(brief["intro"])
+    st.subheader(h["bottom_line"])
+    with st.container(border=True):
+        for line in brief["bottom_line"]:
+            st.markdown(f"- {line}")
 
     for block in brief["blocks"]:
-        if block == "watch" and not brief["watch"]:
-            continue
-        if block == "watch":
-            with st.expander(f"{h['watch']} ({len(brief['watch'])})"):
-                st.caption(blurbs.get("watch", ""))
-                for c in brief["watch"]:
-                    _brief_card(c, labels, compact=True)
-            continue
-        st.subheader(h[block])
-        if blurbs.get(block):
-            st.caption(blurbs[block])
         if block == "bottom_line":
-            with st.container(border=True):
-                for line in brief["bottom_line"]:
-                    st.markdown(line)
-        elif block == "scorecard":
-            tiles = brief["scorecard"]
-            for row in range(0, len(tiles), 3):
-                for col, t in zip(st.columns(3), tiles[row:row + 3]):
-                    with col.container(border=True):
-                        st.metric(t["label"], t["value_text"])
-                        if t.get("n_text"):
-                            st.caption(" · ".join([t["n_text"], *t["notes"]]))
-                        if t.get("trend_text"):
-                            color, mark = TREND_STYLE.get(t["trend"], ("gray", "·"))
-                            st.markdown(f":{color}[{mark} {t['trend_text']}]")
-        elif block == "priorities":
-            if not brief["priorities"]:
-                st.info(brief["bottom_line"][-1] if brief["bottom_line"] else "")
-            for c in brief["priorities"]:
-                _brief_card(c, labels)
+            continue
+        if block == "scorecard":
+            with st.expander(f"{h[block]} · {len(brief['scorecard'])} goals", expanded=True):
+                st.caption(blurbs.get(block, ""))
+                _brief_scorecard(brief["scorecard"])
+        elif block in ("priorities", "watch"):
+            if not brief[block]:
+                continue
+            with st.expander(h[block]):
+                st.caption(blurbs.get(block, ""))
+                for c in brief[block]:
+                    _brief_card(c, labels, compact=block == "watch")
         elif block == "reach":
-            cols = st.columns(max(len(brief["reach"]), 1))
-            for col, r in zip(cols, brief["reach"]):
-                with col.container(border=True):
+            with st.expander(f"{h[block]} · {', '.join(r['label'] for r in brief['reach'])}"):
+                st.caption(blurbs.get(block, ""))
+                for r in brief["reach"]:
                     st.markdown(f"###### {r['label']}")
-                    for line in r["lines"]:
-                        st.markdown(f"- {line}")
+                    st.markdown("\n".join(f"- {line}" for line in r["lines"]))
         elif block == "comments":
             cm = brief["comments"] or {}
-            if cm.get("none"):
-                st.info(cm["none"])
-                continue
-            st.caption(cm.get("coverage") or "")
-            for col, c in zip(st.columns(max(len(cm["columns"]), 1)), cm["columns"]):
-                with col.container(border=True):
-                    st.markdown(f"###### {c['heading']}")
-                    if c["none"]:
-                        st.caption(c["none"])
-                    for t in c["topics"]:
-                        st.markdown(f"{t['topic']} · n = {t['n']}")
-                        st.caption(f"“{t['quote']}”")
+            with st.expander(h[block]):
+                if cm.get("none"):
+                    st.caption(cm["none"])
+                    continue
+                st.caption(cm.get("coverage") or "")
+                for col, c in zip(st.columns(max(len(cm["columns"]), 1)), cm["columns"]):
+                    with col:
+                        st.markdown(f"###### {c['heading']}")
+                        if c["none"]:
+                            st.caption(c["none"])
+                        for t in c["topics"]:
+                            st.markdown(f"{t['topic']} · n = {t['n']}")
+                            st.caption(f"“{t['quote']}”")
         elif block == "measurement":
-            if not brief["measurement"]:
-                st.success(f"✓ {brief['measurement_none']}")
-            for m in brief["measurement"]:
-                with st.container(border=True):
-                    st.write(m["text"])
+            items = brief["measurement"]
+            with st.expander(h[block]):
+                st.caption(blurbs.get(block, ""))
+                if not items:
+                    st.success(f"✓ {brief['measurement_none']}")
+                for m in items:
+                    st.markdown(f"- {m['text']}")
                     if m.get("action"):
                         st.caption(m["action"])
         elif block == "limits":
-            st.markdown("\n".join(f"- {x}" for x in brief["limits"]))
+            with st.expander(h[block]):
+                st.markdown("\n".join(f"- {x}" for x in brief["limits"]))
 
 
 # ----- M5: comment board -------------------------------------------------
@@ -1028,11 +1042,12 @@ def main() -> None:
         schema = load_schema()
         decisions = _load_decisions(str(DECISIONS_PATH))
         names = (decisions.get("brief") or {}).get("audiences") or {}
-        audience = st.segmented_control(
+        pick_col, copy_col, dl_col = st.columns([2, 1, 1], vertical_alignment="bottom")
+        audience = pick_col.segmented_control(
             "Version", list(AUDIENCES), key="m6_audience", default=AUDIENCES[0],
-            format_func=lambda a: names.get(a, a)) or AUDIENCES[0]
-        st.caption("Internal shows every finding. Funder / report shows outcomes, reach and "
-                   "limits, and never names a session or presenter item.")
+            format_func=lambda a: names.get(a, a),
+            help="Internal shows every finding. Funder / report shows outcomes, reach and "
+                 "limits, and never names a session or presenter item.") or AUDIENCES[0]
         cards, _ = _insight_cards(df, result, metrics, schema, decisions)
         brief = build_brief(
             metrics, cards,
@@ -1042,6 +1057,7 @@ def main() -> None:
              for t in (decisions.get("brief") or {}).get("scorecard") or [] if t.get("trend")},
             board(classify_df(df, schema), schema), decisions,
             audience=audience, excluded_flagged=exclude)
+        _brief_export(brief, copy_col, dl_col)
         _show_brief(brief)
 
 main()

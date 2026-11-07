@@ -11,7 +11,8 @@
 # - rule = what makes the check flag (shown in Checks run, so results can be verified).
 # - too_few = why a check could not run; {n} is the number that fell short.
 # - Every check's evidence also has {threshold} and {min_n}.
-# - decision = the yes/no choice the owner makes, phrased as a question.
+# - decision = the yes/no choice the owner makes, phrased as "Should we ...?".
+#   It may use {placeholders} from evidence, like the other texts.
 # - finding.text = what we found; finding.action = options to consider (not
 #   instructions); finding.success_measure = what success looks like (a measurable target).
 # - owner_role is an area of responsibility, not a job title, since we don't know
@@ -41,315 +42,354 @@ labels:
     well_organized: training was well organized
     nps: would recommend
     likely_call: likely to call 988
-    comment_valuable: most valuable comment
-    comment_improve: how to improve comment
+    comment_valuable: "'most valuable' comment box"
+    comment_improve: "'how to improve' comment box"
   words:
     above: above
     below: below
 
 checks:
   A:
-    question: Did the score change only because the audience changed?
-    decision: Report this trend with the audience-adjusted line next to it?
+    question: >
+      Did the score change only because a different mix of people attended?
+    decision: >
+      Should reports on "{metric_label}" show the role-adjusted trend next to
+      the reported one?
     lever: funder_reporting
     secondary_lever: audience_targeting
     owner_role: Program reporting
     confirmed: false
     rule: >
-      Flags when the as-reported and audience-adjusted change, from the
-      first to the last month with enough answers, differ by {threshold} or
-      more.
+      Flags when the reported change and the change after adjusting for each
+      month's mix of roles (students, school staff, caregivers, community)
+      differ by {threshold} or more, comparing the first and last months that
+      each have at least {min_n} answers.
     too_few: >
-      Needs two months with at least {min_n} answers each; {months_ok}
-      qualify (largest month: {n} answers).
+      Needs at least two months with {min_n} or more answers each; {months_ok}
+      months qualify (the largest month has {n} answers).
     finding:
       text: >
-        From {first_month} to {last_month}, "{metric_label}" moved
-        {raw_change}. After accounting for who attended, it moved
-        {adjusted_change} (n = {n_first} and {n_last}). Part of the change
-        may come from training a different mix of people rather than from
-        the training itself.
+        From {first_month} to {last_month}, "{metric_label}" changed by
+        {raw_change} as reported, but by {adjusted_change} after adjusting for
+        the mix of roles who attended ({n_first} answers in {first_month},
+        {n_last} in {last_month}). Part of the reported change likely reflects
+        who was trained, not how well the training worked.
       action: >
-        Consider showing both the as-reported and the adjusted line whenever
-        this trend is reported.
+        Consider showing both the reported and the role-adjusted trend
+        whenever this result is shared, so the change is not credited to, or
+        blamed on, the training itself.
       success_measure: >
-        The next report shows both lines side by side, and they differ by
-        less than {target_gap}.
+        The next report shows both trends side by side, and the gap between
+        them is under {target_gap}.
     no_finding:
       text: >
-        Between {first_month} and {last_month}, "{metric_label}" moved
-        {raw_change} as reported and {adjusted_change} after adjusting for
-        who attended, a gap under {threshold} ({n} answers across the two
-        months).
+        From {first_month} to {last_month}, "{metric_label}" changed by
+        {raw_change} as reported and {adjusted_change} after adjusting for the
+        mix of roles, a difference under {threshold} ({n} answers across the
+        two months).
 
   B:
-    question: Do people know when to use 988 but still wouldn't call?
+    question: >
+      Do people know when to use 988 but still wouldn't call?
     decision: >
-      Add content on why people hesitate to call (what happens,
-      confidentiality, 911 vs 988)?
+      Should we add content on what stops people from calling: what happens on
+      a call, confidentiality, and when to call 911 vs 988?
     lever: curriculum_content
     owner_role: Curriculum
     confirmed: false
     rule: >
-      Flags when {threshold} or more of respondents know when to use 988 but
-      are not very likely to call.
+      Flags when {threshold} or more of respondents agree they know when to
+      use 988 but rate their chance of calling {call_cutoff} or lower out of
+      {call_max}.
     too_few: >
-      Only {n} people answered both 'know when to use 988' and 'likely to
-      call'; needs {min_n}.
+      Only {n} people answered both the 'know when to use 988' question and
+      the 'likely to call' question; at least {min_n} are needed.
     finding:
       text: >
-        {gap_pct} of respondents ({gap_n} of {n}) say they know when to use
-        988 but rated their chance of calling {call_cutoff} or lower (out of
-        {call_max}).
+        {gap_pct} of respondents ({gap_n} of {n}) agree they know when to use
+        988 but rate their chance of calling {call_cutoff} or lower out of
+        {call_max}. Knowing when to call is not yet turning into intent to
+        call.
       action: >
-        Consider adding content on what holds people back: what happens when
-        you call, confidentiality, and when to call 911 vs 988.
+        Consider adding a short segment on what holds people back: what
+        happens when you call, whether the call is confidential, and when to
+        call 911 instead of 988.
       success_measure: >
-        The share who know when to use 988 but wouldn't call falls below
-        {target_pct} next quarter, with at least {min_n} responses.
+        Next quarter, fewer than {target_pct} of respondents know when to use
+        988 but rate their chance of calling {call_cutoff} or lower, with at
+        least {min_n} responses.
     no_finding:
       text: >
-        {gap_pct} know when to use 988 but are not very likely to call
-        ({gap_n} of {n} who answered both questions), under the {threshold}
-        line.
+        {gap_pct} of respondents ({gap_n} of {n} who answered both questions)
+        know when to use 988 but rate their chance of calling {call_cutoff} or
+        lower, under the {threshold} threshold.
 
   C:
-    question: Is delivery more linked to intent to call than knowledge?
-    decision: Invest in presenter coaching or peer observation?
+    question: >
+      Is how the training was delivered more linked to intent to call than
+      what people learned?
+    decision: >
+      Should we invest in presenter coaching or peer observation, starting
+      with "{top_delivery_item}"?
     lever: presenter_coaching
     owner_role: Training
     confirmed: false
     rule: >
-      Flags when the strongest delivery item is linked to willingness to
-      call by {threshold} or more above the strongest knowledge item.
+      Flags when the delivery question most linked to likelihood of calling is
+      ahead of the most-linked knowledge question by {threshold} or more (rank
+      correlation; higher means a stronger link).
     too_few: >
-      Only {n} people answered every item and 'likely to call'; needs
-      {min_n}.
+      Only {n} people answered every delivery and knowledge question plus the
+      'likely to call' question; at least {min_n} are needed.
     finding:
       text: >
-        How the session was delivered is more closely linked to people's
-        willingness to call than what they learned (link strength
-        {delivery_link} vs {knowledge_link}; higher means more closely
-        linked; n = {n}). The strongest delivery item was
-        "{top_delivery_item}".
+        Likelihood of calling tracks how the training was delivered more than
+        what people learned. The strongest delivery question,
+        "{top_delivery_item}", has a link of {delivery_link}, versus
+        {knowledge_link} for the strongest knowledge question (rank
+        correlation; higher means a stronger link; n = {n}). This shows a
+        link, not cause and effect.
       action: >
-        Consider whether presenter coaching or peer observation is worth
-        investing in.
+        Consider whether presenter coaching or peer observation, focused on
+        "{top_delivery_item}", is worth investing in.
       success_measure: >
-        "Liked the delivery" rises from {delivery_agree_pct} to {target_pct}
-        next quarter.
+        The share of respondents who agree with every delivery question rises
+        from {delivery_agree_pct} to {target_pct} next quarter.
     no_finding:
       text: >
-        Strongest delivery link {delivery_link} vs strongest knowledge link
-        {knowledge_link}: delivery is not ahead by {threshold} or more (at
-        least {n} answers per item).
+        The strongest delivery question has a link of {delivery_link} with
+        likelihood of calling, versus {knowledge_link} for the strongest
+        knowledge question: not ahead by {threshold} or more (at least {n}
+        answers per question).
 
   D:
-    question: Were many already at the top before training?
+    question: >
+      Did many people already give the top score before training?
     decision: >
-      Offer a more advanced version for audiences who start high, or
-      reword the before-training question?
+      Should we reword the before-training question on "{item_label}" so the
+      survey can show growth for people who already start at {top_score} of
+      {top_score}?
     lever: audience_targeting
     secondary_lever: survey_design
     owner_role: Curriculum
     confirmed: false
     rule: >
-      Flags when {threshold} or more already gave the top score on a before-
-      training question.
+      Flags when {threshold} or more of respondents gave the top score
+      ({top_score} of {top_score}) on any before-training question.
     too_few: >
-      Only {n} people answered the before-training questions; needs {min_n}.
+      Only {n} people answered the before-training questions; at least {min_n}
+      are needed.
     finding:
       text: >
-        {ceiling_pct} of respondents (n = {n}) already gave the top score on
-        "{item_label}" before training, so the survey can't show growth for
-        them.
+        {ceiling_pct} of respondents (n = {n}) rated themselves {top_score} of
+        {top_score} on "{item_label}" before training. They cannot report any
+        improvement, so the before/after change understates what the training
+        does for them.
       action: >
-        Options: offer a more advanced version for audiences who start high,
-        or reword the before-training question so answers spread out more.
+        Options to consider: reword the before-training question so fewer
+        people choose the top answer (for example, ask about a specific
+        skill), or offer a more advanced version for groups that already know
+        the basics.
       success_measure: >
-        Fewer than {target_pct} of respondents start at the top score on
-        "{item_label}" in the next survey round.
+        In the next survey round, fewer than {target_pct} of respondents rate
+        themselves {top_score} of {top_score} on "{item_label}" before
+        training.
     no_finding:
       text: >
-        The highest share already at the top before training was
-        {ceiling_pct} ("{item_label}", {n} answers), under the {threshold}
-        line.
+        The before-training question with the most top scores was
+        "{item_label}", at {ceiling_pct} ({n} answers), under the {threshold}
+        threshold.
 
   E:
-    question: Is a score low only because answers are blank?
-    decision: Change the survey layout or make this question required?
+    question: >
+      Is a score low only because many people left the question blank?
+    decision: >
+      Should we change how "{question_label}" appears on the survey so fewer
+      people skip it?
     lever: survey_design
     owner_role: Survey Design
     confirmed: false
     rule: >
-      Flags when a question is left blank in {threshold} or more of a
-      month's answers, well above other months.
+      Flags when a question is left blank in {threshold} or more of a month's
+      responses, and in at least {jump} more than in other months.
     too_few: >
-      No month has at least {min_n} responses (largest month: {n}).
+      No month has {min_n} or more responses (the largest month has {n}), so
+      blank rates cannot be compared by month.
     finding:
       text: >
-        In {month}, {blank_pct} of answers to "{question_label}" were left
-        blank (n = {n}). A low score there may reflect missing answers rather
-        than opinion.
+        In {month}, {blank_pct} of the {n} responses left "{question_label}"
+        blank, far more than in other months. That month's score for this
+        question rests on fewer answers; blanks are not counted as
+        disagreement.
       action: >
-        Consider checking how that question appears on the survey, or making
-        it required.
+        Consider checking whether the question was hidden, moved, or easy to
+        miss in that month's survey, or making it required.
       success_measure: >
-        Blank answers to "{question_label}" fall below {target_pct} next
-        month.
+        Next month, fewer than {target_pct} of responses leave
+        "{question_label}" blank.
     no_finding:
       text: >
-        No question was blank in {threshold} or more of a month's answers
-        ({n} responses in months with at least {min_n}).
+        No question was left blank in {threshold} or more of any month's
+        responses ({n} responses across months with at least {min_n}).
 
   F:
-    question: Are unhappy respondents silent about why?
-    decision: Add a follow-up question for people who give a low rating?
+    question: >
+      Are people who gave a low rating silent about why?
+    decision: >
+      Should we add a follow-up question asking people who give a low rating
+      what would have made the training better?
     lever: survey_design
     owner_role: Survey Design
     confirmed: false
     rule: >
-      Flags when {threshold} or more of people who gave a low rating leave
-      no comment.
+      Flags when {threshold} or more of people who rated "would recommend"
+      {low_cutoff} or lower left no comment.
     too_few: >
-      Only {n} people gave a low rating; needs {min_n}.
+      Only {n} people rated "would recommend" {low_cutoff} or lower; at least
+      {min_n} are needed.
     finding:
       text: >
-        {silent_pct} of people who gave a low rating ({low_cutoff} or below;
-        {low_n} people) left no comment explaining why.
+        {silent_pct} of the {low_n} people who rated "would recommend"
+        {low_cutoff} or lower left no comment, so we do not know what
+        disappointed them.
       action: >
-        Consider adding a short follow-up question that appears only after a
-        low rating.
+        Consider adding a short follow-up that appears only after a low
+        rating, such as "What would have made this training better?"
       success_measure: >
-        Low raters who leave no comment fall below {target_pct} after the
-        change.
+        After the follow-up is added, fewer than {target_pct} of people who
+        rate {low_cutoff} or lower leave no comment.
     no_finding:
       text: >
-        {silent_pct} of the {low_n} people who gave a low rating left no
-        comment, under the {threshold} line.
+        {silent_pct} of the {low_n} people who rated "would recommend"
+        {low_cutoff} or lower left no comment, under the {threshold}
+        threshold.
 
   G:
-    question: Are fewer people writing comments?
-    decision: Change when or how the survey is given?
+    question: >
+      Are fewer people writing comments?
+    decision: >
+      Should we change when or how the survey is handed out so people have
+      time to write comments?
     lever: survey_design
     owner_role: Survey Design
     confirmed: false
     rule: >
-      Flags when the latest month's comment rate is {threshold} or more
-      below earlier months.
+      Flags when the share of responses with a comment in the latest month is
+      {threshold} or more below earlier months.
     too_few: >
-      Needs two months with at least {min_n} responses each; {months_ok}
-      qualify (largest month: {n}).
+      Needs at least two months with {min_n} or more responses each;
+      {months_ok} months qualify (the largest month has {n}).
     finding:
       text: >
-        Fewer people are writing a "{field_label}": {late_rate} in
-        {late_month} (n = {n_late}) vs {early_rate} in earlier months
-        (n = {n_early}).
+        Fewer people are filling in the {field_label}: {late_rate} of {n_late}
+        responses in {late_month}, versus {early_rate} of {n_early} in earlier
+        months.
       action: >
-        Consider whether the timing or format of the survey changed, for
-        example being handed out as people are leaving.
+        Consider whether the survey's timing or format changed in
+        {late_month}, for example handed out as people were leaving, or the
+        comment box moved to a later page.
       success_measure: >
-        The comment rate returns to {target_pct} or higher next quarter.
+        Next quarter, the share of responses with a comment returns to
+        {target_pct} or higher.
     no_finding:
       text: >
-        The latest month's comment rate is not {threshold} or more below
-        earlier months ({n} responses in months with at least {min_n}).
+        The latest month's comment rate is within {threshold} of earlier
+        months ({n} responses across months with at least {min_n}).
 
   H:
-    question: Is any session outside the funnel limits?
+    question: >
+      Did any session score far outside the normal range for its size?
     decision: >
-      Review this session's context (audience, setting, logistics) with
-      the presenter?
+      Should we review the context of session {session_label} (audience, room,
+      timing, logistics) with its presenter?
     lever: presenter_coaching
     secondary_lever: scheduling_format
     owner_role: Training
     confirmed: false
     rule: >
-      Flags a session outside the {threshold} limits for its size, i.e.
-      unlikely to be chance.
+      Flags a session whose score falls outside the {threshold} control limits
+      for its size, which is unlikely to happen by chance. Limits are wider
+      for smaller sessions.
     too_few: >
-      No session has at least {min_n} answers (largest session: {n}).
+      No session has {min_n} or more answers (the largest has {n}).
     finding:
       text: >
         Session {session_label} ({n} responses) scored {session_value} on
-        "{metric_label}", {limit_side} the usual range for a session of its
-        size (typical: {centre}). Many things can explain this, such as the
-        audience, room, time of day, or logistics.
+        "{metric_label}", {limit_side} the expected range for a session of its
+        size (average across sessions: {centre}). Many things can explain
+        this, such as the audience, room, time of day, or logistics.
       action: >
-        Consider reviewing the session's context together with the presenter
-        to learn what was different and whether it is worth repeating or
-        adjusting.
+        Consider reviewing the session's context with the presenter to learn
+        what was different, and whether it is worth repeating or adjusting.
       success_measure: >
-        A context review with the presenter is held and notes are recorded
-        before the next session in {county}.
+        Notes from a context review with the presenter are recorded before the
+        next session in {county}.
     no_finding:
       text: >
-        All sessions with at least {min_n} answers are inside the
+        All sessions with {min_n} or more answers scored inside the
         {threshold} limits for their size.
 
   I:
-    question: Do flagged rushed answers move the headline numbers?
+    question: >
+      Do flagged responses (rushed, same answer to every question, or
+      contradictory) change the headline numbers?
     decision: >
-      Report headline numbers without flagged answers, and give
-      participants more time?
+      Should funder reports state whether flagged responses are included?
     lever: funder_reporting
     secondary_lever: survey_design
     owner_role: Survey Design
     confirmed: false
     rule: >
-      Flags when leaving out flagged answers moves a headline number by
-      {threshold} or more ({threshold_nps} for NPS).
+      Flags when leaving out flagged responses moves a headline number by
+      {threshold} or more ({threshold_nps} points for NPS).
     too_few: >
-      Only {n} answers to compare headline numbers; needs {min_n}.
+      Only {n} responses in total; at least {min_n} are needed to compare
+      headline numbers.
     finding:
       text: >
-        Leaving out {flagged_n} rushed or patterned answers ({flagged_pct} of
-        {n}) changes "{metric_label}" from {with_flags} to {without_flags}.
+        Leaving out the {flagged_n} flagged responses ({flagged_pct} of {n}:
+        completed very fast, same answer to every question, or contradictory)
+        changes "{metric_label}" from {with_flags} to {without_flags}.
       action: >
-        Consider stating in reports which version is used. If many were
-        completed very quickly, giving participants a few more minutes may
-        help.
+        Consider stating in every report whether flagged responses are
+        included. If many were completed very fast, consider giving
+        participants a few more minutes to fill in the survey.
       success_measure: >
-        Flagged answers fall below {target_pct} next quarter, and each report
-        says whether flagged answers are included.
+        Next quarter, flagged responses fall below {target_pct} of all
+        responses, and every report states whether they are included.
     no_finding:
       text: >
-        Leaving out {flagged_n} flagged answers (of {n}) moves no headline
-        number by {threshold} or more.
+        Leaving out the {flagged_n} flagged responses (of {n}) moves no
+        headline number by {threshold} or more.
 
   J:
-    question: Are people asking questions the training didn't answer?
-    decision: Add these topics to the session or a handout/FAQ?
+    question: >
+      Are people asking questions the training didn't answer?
+    decision: >
+      Should we answer "{top_topic}" questions in the session or in a take-home handout?
     lever: curriculum_content
     owner_role: Curriculum
     confirmed: false
     rule: >
-      Flags when {threshold} or more of comments ask a question the training
-      may not have answered.
+      Flags when {threshold} or more of written comments ask a question the
+      training may not have answered.
     too_few: >
-      Only {n} comments; needs {min_n}.
+      Only {n} written comments; at least {min_n} are needed.
     finding:
       text: >
-        {question_n} of {comment_n} comments ask a question the training may
-        not have answered. The most common topic was "{top_topic}"
-        ({top_topic_n} comments).
+        {question_n} of {comment_n} written comments ask a question the
+        training may not have answered. The most common topic was
+        "{top_topic}" ({top_topic_n} comments).
       action: >
-        Consider covering it in the session or in a handout/FAQ.
+        Consider adding a short answer on "{top_topic}" to the session, or to
+        a handout or FAQ participants take home.
       success_measure: >
-        Questions about "{top_topic}" fall below {target_n} comments next
-        quarter.
+        Next quarter, fewer than {target_n} comments ask about "{top_topic}".
     no_finding:
       text: >
-        {question_n} of {comment_n} comments ask a question the training may
-        not have answered, under the {threshold} line.
+        {question_n} of {comment_n} written comments ask a question the
+        training may not have answered, under the {threshold} threshold.
 
-# ---------------------------------------------------------------------
-# Program Brief (section 6, pipeline/summarize.py). Rule-based, no AI.
-# {placeholders} are filled only from evidence; every number in the
-# brief is checked against the data before it can be copied.
-# Leave targets empty until EveryMind sets them; tiles then show
-# direction only. Example:  targets: {likely_call.pct_high: 0.60}
-# ---------------------------------------------------------------------
 brief:
   title: "988 awareness training: program brief"
   audiences:

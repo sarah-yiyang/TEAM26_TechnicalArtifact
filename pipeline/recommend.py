@@ -26,8 +26,8 @@ import pandas as pd
 import yaml
 
 from pipeline import MIN_N, ROOT, load_schema
-from pipeline.metrics import ROW_METRICS
-from pipeline.trends import BLANK_ALERT_MIN, COMMENT_DROP
+from pipeline.metrics import LIKERT_MAX, ROW_METRICS
+from pipeline.trends import BLANK_ALERT_JUMP, BLANK_ALERT_MIN, COMMENT_DROP
 
 DECISIONS_PATH: Path = ROOT / "config" / "decisions.yaml"
 CHECK_METRIC: str = "agree_pct.post_when"   # measure used for checks A and H
@@ -199,15 +199,18 @@ def _out(result: str, evidence: dict[str, Any] | None = None, n: int = 0,
     return {"result": result, "evidence": ev, "n": int(n), "ratio": ratio}
 
 
-def _thresholds() -> dict[str, dict[str, Any]]:
-    """Each check's flag line, formatted as shown in its rule text."""
+def _thresholds(analysis: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Each check's fixed values (flag line, scale cutoffs), formatted as shown in text."""
     return {
         "A": {"threshold": _points(A_MIX_GAP_SHARE).lstrip("+")},
-        "B": {"threshold": _pct(B_GAP_MIN)},
+        "B": {"threshold": _pct(B_GAP_MIN),
+              "call_cutoff": int(analysis["likely_call_high"]) - 1,
+              "call_max": int(analysis["scale_0_10_valid_range"][1])},
         "C": {"threshold": f"{C_MARGIN:.2f}"},
-        "D": {"threshold": _pct(D_CEILING_MIN)},
-        "E": {"threshold": _pct(BLANK_ALERT_MIN)},
-        "F": {"threshold": _pct(F_SILENT_MIN)},
+        "D": {"threshold": _pct(D_CEILING_MIN), "top_score": LIKERT_MAX},
+        "E": {"threshold": _pct(BLANK_ALERT_MIN), "jump": _points(BLANK_ALERT_JUMP).lstrip("+")},
+        "F": {"threshold": _pct(F_SILENT_MIN),
+              "low_cutoff": int(analysis["nps_detractor_max"])},
         "G": {"threshold": _points(COMMENT_DROP).lstrip("+")},
         "H": {"threshold": H_LIMITS},
         "I": {"threshold": _points(I_SHIFT["agree_pct.post_when"]).lstrip("+"),
@@ -456,14 +459,14 @@ def _evidence_text(ev: dict[str, Any]) -> str:
 
 
 def _build(cid: str, res: dict[str, Any], entry: dict[str, Any] | None,
-           allowed: list[str]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+           allowed: list[str], fixed: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     gaps: list[str] = []
     if entry is None:
         gaps.append("no entry in decisions.yaml")
         entry = {}
     else:
         gaps.extend(_entry_errors(entry))
-    ev = {**_thresholds()[cid], "min_n": MIN_N, **res["evidence"]}
+    ev = {**fixed, "min_n": MIN_N, **res["evidence"]}
     n = res["n"]
     question = str(entry.get("question") or f"Check {cid}")
     run = {"id": cid, "question": question, "result": res["result"], "text": None,
@@ -481,7 +484,8 @@ def _build(cid: str, res: dict[str, Any], entry: dict[str, Any] | None,
     lever = entry.get("lever") if entry.get("lever") in LEVERS else None
     sec = entry.get("secondary_lever")
     owner = str(entry.get("owner_role") or "").strip() or NOT_ASSIGNED
-    decision = " ".join(str(entry.get("decision") or "").split()) or NOT_ASSIGNED
+    decision = (_fill_top(entry, "decision", ev, allowed, gaps) if entry.get("decision")
+                else None) or NOT_ASSIGNED
     text = _fill(entry, "finding", "text", ev, allowed, gaps) if entry else None
     conf = _confidence(n)
     card = {
@@ -519,9 +523,10 @@ def run_checks(
            "labels": decisions.get("labels") or {}}
     entries = decisions.get("checks") or {}
     allowed = [str(x) for x in decisions.get("allowed_literals") or []]
+    fixed = _thresholds(ctx["analysis"])
     cards, runs = [], []
     for cid, check in CHECKS.items():
-        card, run = _build(cid, check(ctx), entries.get(cid), allowed)
+        card, run = _build(cid, check(ctx), entries.get(cid), allowed, fixed[cid])
         runs.append(run)
         if card:
             cards.append(card)

@@ -146,10 +146,12 @@ def test_app_shows_program_brief() -> None:
     assert not at.exception
     assert [h.value for h in at.header] == ["Program brief"]
     headings = load_decisions()["brief"]["headings"]
-    subs = [x.value for x in at.subheader]
-    assert subs[0] == headings["bottom_line"] and headings["limits"] in subs
+    assert [x.value for x in at.subheader] == [headings["bottom_line"]]
+    labels = [e.label for e in at.expander]
+    assert labels[0].startswith(headings["scorecard"]) and at.expander[0].proto.expanded
+    assert any(x.startswith(headings["limits"]) for x in labels)
     assert len(at.code) == 1 and at.code[0].value.startswith("# ")
-    assert any("Every number in this brief was traced" in c.value for c in at.caption)
+    assert any("Every number was traced" in c.value for c in at.caption)
     assert len(at.metric) == len(load_decisions()["brief"]["scorecard"])
     assert not any("Coming in milestone" in m.value for m in at.markdown)
 
@@ -162,9 +164,9 @@ def test_app_program_brief_funder_version() -> None:
     at.radio(key="section").set_value(6).run(timeout=30)
     assert not at.exception
     headings = load_decisions()["brief"]["headings"]
-    subs = [x.value for x in at.subheader]
-    assert headings["priorities"] not in subs and headings["comments"] not in subs
-    assert headings["reach"] in subs
+    labels = " | ".join(e.label for e in at.expander)
+    assert headings["comments"] not in labels and headings["measurement"] not in labels
+    assert headings["reach"] in labels
 
 
 def test_app_shows_comment_board() -> None:
