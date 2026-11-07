@@ -151,9 +151,23 @@ def test_app_shows_comment_board() -> None:
     assert not at.exception
     assert [h.value for h in at.header] == ["Comment board"]
     subs = [s.value for s in at.subheader]
-    assert subs == ["Keep · n = 22", "Fix · n = 5", "Add · n = 5"]
+    assert subs == ["Keep · n = 22", "Fix · n = 5", "Add · n = 5", "All comments"]
     assert any("keyword rules" in c.value for c in at.caption)
-    assert len(at.dataframe) == 3
+    labels = [e.label for e in at.expander]
+    for label in ("Positive/no change · 3", "Logistics/format · 2", "More detail/content · 2"):
+        assert label in labels                       # every column is topic by topic
+    assert len(at.dataframe) == len(labels) + 1      # one list per topic + all comments
+    assert any("Showing 32 of 32 comments" in c.value for c in at.caption)
+    assert not any(c.key == "m5_ai" for c in at.checkbox)   # no AI box
+
+
+def test_app_all_comments_filters() -> None:
+    at = _sample(5)
+    at.selectbox(key="m5_col").set_value("Add").run(timeout=30)
+    assert any("Showing 5 of 32 comments" in c.value for c in at.caption)
+    at.selectbox(key="m5_topic").set_value("More detail/content").run(timeout=30)
+    assert not at.exception
+    assert any("Showing 2 of 32 comments" in c.value for c in at.caption)
 
 
 def test_app_flag_toggle_carries_to_other_sections() -> None:

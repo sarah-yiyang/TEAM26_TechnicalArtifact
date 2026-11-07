@@ -1,19 +1,19 @@
-"""Sort open-ended comments into a topic and a kind (M5a: keyword rules only).
+"""Sort open-ended comments into a topic and a kind with keyword rules.
 
 All phrases come from the ``themes`` block of ``config/schema.yaml``; this
 module holds no survey wording. Functions are pure: no file I/O, no network.
 
-- ``classify``: list of ``(field, text)`` -> ``[{topic, kind, method}]``
+- ``classify``: list of ``(field, text)`` -> ``[{topic, kind}]``
 - ``classify_df``: one row per comment cell, for the board and checks F / J
 - ``check_input``: the ``themes`` argument ``recommend.run_checks`` expects
-- ``board``: Keep / Fix / Add topic counts
+- ``board``: Keep / Fix / Add columns, topic by topic, with every comment
+- ``comment_table``: every comment with its column, topic and month
 """
 from __future__ import annotations
 
 import re
 import string
 import unicodedata
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -21,7 +21,16 @@ import pandas as pd
 from pipeline.ingest import normalize_text
 
 KINDS: tuple[str, ...] = ("suggestion", "open_question", "praise", "empty")
-METHOD_KEYWORDS: str = "keywords"
+TIME_COL: str = "start_time"     # used to list the most recent comments first
+
+# ----- redaction (patterns, not survey wording) -----------------------------
+_NAME = r"[A-Z][a-z'\-]+\b(?:\s+[A-Z][a-z'\-]+\b)?"
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)")
+TITLE_NAME_RE = re.compile(r"\b(?:Mr|Mrs|Ms|Miss|Dr|Prof|Coach|Sr|Sra|Srta)\.?\s+" + _NAME)
+CUE_NAME_RE = re.compile(
+    r"((?i:\b(?:my name is|me llamo|thanks to|thank you|presenter|trainer|teacher|"
+    r"counselor|facilitator|speaker))\s+)(" + _NAME + ")")
 _PUNCT = re.compile(f"[{re.escape(string.punctuation)}¿¡]")
 
 
@@ -104,17 +113,8 @@ def _topic(text: str, rules: dict[str, Any], schema: dict[str, Any]) -> str:
     return str(rules.get("other_topic", "Other"))
 
 
-def classify(
-    comments: list[tuple[str, Any]],
-    schema: dict[str, Any],
-    cache_path: str | Path | None = None,
-    use_llm: bool = False,
-) -> list[dict[str, str]]:
-    """Give each ``(field, text)`` a topic and kind using the schema's keyword rules.
-
-    ``cache_path`` and ``use_llm`` are accepted for the later AI step (M5b) and
-    are ignored for now: no network, ``method`` is always "keywords".
-    """
+def classify(comments: list[tuple[str, Any]], schema: dict[str, Any]) -> list[dict[str, str]]:
+    """Give each ``(field, text)`` a topic and kind using the schema's keyword rules."""
     rules = _rules(schema)
     other = str(rules.get("other_topic", "Other"))
     out: list[dict[str, str]] = []
@@ -122,8 +122,16 @@ def classify(
         text = "" if _is_blank(raw) else _norm(raw, schema)
         kind = _kind(field, text, rules, schema)
         topic = other if kind == "empty" else _topic(text, rules, schema)
-        out.append({"topic": topic, "kind": kind, "method": METHOD_KEYWORDS})
+        out.append({"topic": topic, "kind": kind})
     return out
+
+
+def redact(text: str) -> str:
+    """Replace emails, phone numbers and likely names with [EMAIL] / [PHONE] / [NAME]."""
+    text = EMAIL_RE.sub("[EMAIL]", text)
+    text = PHONE_RE.sub("[PHONE]", text)
+    text = TITLE_NAME_RE.sub("[NAME]", text)
+    return CUE_NAME_RE.sub(lambda m: m.group(1) + "[NAME]", text)
 
 
 def comment_fields(df: pd.DataFrame, schema: dict[str, Any]) -> list[str]:
@@ -132,16 +140,19 @@ def comment_fields(df: pd.DataFrame, schema: dict[str, Any]) -> list[str]:
 
 
 def classify_df(df: pd.DataFrame, schema: dict[str, Any]) -> pd.DataFrame:
-    """One row per (response, comment field): ``row, field, text, topic, kind, method``.
+    """One row per (response, comment field): ``row, field, text, time, topic, kind``.
 
-    ``row`` is the index label in ``df``. Blank answers are kept as kind "empty".
+    ``row`` is the index label in ``df``; ``time`` is its start time (or empty).
+    Blank answers are kept as kind "empty".
     """
     fields = comment_fields(df, schema)
+    times = df[TIME_COL] if TIME_COL in df.columns else pd.Series(pd.NaT, index=df.index)
     pairs = [(idx, f, df.at[idx, f]) for f in fields for idx in df.index]
     labels = classify([(f, t) for _, f, t in pairs], schema)
-    rows = [{"row": idx, "field": f, "text": None if _is_blank(t) else t, **lab}
+    rows = [{"row": idx, "field": f, "text": None if _is_blank(t) else t,
+             "time": times.at[idx], **lab}
             for (idx, f, t), lab in zip(pairs, labels)]
-    return pd.DataFrame(rows, columns=["row", "field", "text", "topic", "kind", "method"])
+    return pd.DataFrame(rows, columns=["row", "field", "text", "time", "topic", "kind"])
 
 
 def check_input(
@@ -167,16 +178,43 @@ def check_input(
             "comments": classified[["topic", "kind"]].to_dict("records")}
 
 
+def comment_table(classified: pd.DataFrame, schema: dict[str, Any]) -> pd.DataFrame:
+    """Every non-empty comment with its board column, topic and month, newest first.
+
+    Columns: ``column`` (Keep / Fix / Add), ``topic``, ``comment`` (redacted, full
+    length), ``month`` ("YYYY-MM", or "" when the start time is missing).
+    Ties and missing times keep file order; missing times go last.
+    """
+    kind_to_col = {str(k): str(c) for c, k in (_rules(schema).get("board", {}) or {}).items()}
+    sub = classified[classified["kind"].isin(kind_to_col)]
+    times = pd.to_datetime(sub["time"], errors="coerce")
+    order = sub.assign(_t=times, _i=range(len(sub))).sort_values(
+        ["_t", "_i"], ascending=[False, True], na_position="last")
+    out = pd.DataFrame({
+        "column": order["kind"].map(kind_to_col),
+        "topic": order["topic"].astype(str),
+        "comment": [redact(" ".join(str(x).split())) for x in order["text"]],
+        "month": [t.strftime("%Y-%m") if pd.notna(t) else "" for t in order["_t"]],
+    })
+    return out.reset_index(drop=True)
+
+
 def board(classified: pd.DataFrame, schema: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    """Keep / Fix / Add columns: ``[{topic, n}]`` sorted by n, then topic."""
+    """Keep / Fix / Add columns: ``[{topic, n, comments}]`` sorted by n, then topic.
+
+    ``comments`` holds every comment in that topic as ``{comment, month}``,
+    newest first (see ``comment_table``).
+    """
+    table = comment_table(classified, schema)
     out: dict[str, list[dict[str, Any]]] = {}
-    for column, kind in (_rules(schema).get("board", {}) or {}).items():
-        sub = classified[classified["kind"] == kind]
-        counts = sub["topic"].value_counts()
-        items = [{"topic": str(t), "n": int(n)} for t, n in counts.items()]
+    for column in (_rules(schema).get("board", {}) or {}):
+        sub = table[table["column"] == str(column)]
+        items = [{"topic": str(topic), "n": len(g),
+                  "comments": g[["comment", "month"]].to_dict("records")}
+                 for topic, g in sub.groupby("topic", sort=False)]
         out[str(column)] = sorted(items, key=lambda x: (-x["n"], x["topic"]))
     return out
 
 
-__all__ = ["classify", "classify_df", "check_input", "board", "comment_fields",
-           "KINDS", "METHOD_KEYWORDS"]
+__all__ = ["classify", "classify_df", "check_input", "board", "comment_table",
+           "comment_fields", "redact", "KINDS"]

@@ -13,7 +13,7 @@ from pipeline.cleaning import clean
 from pipeline.ingest import load_files
 from pipeline.mapping import map_columns
 from pipeline.recommend import load_decisions, run_checks
-from pipeline.themes import board, check_input, classify, classify_df
+from pipeline.themes import board, check_input, classify, classify_df, comment_table
 from tests.test_recommend import inputs, result_of
 
 V, I = "comment_valuable", "comment_improve"
@@ -116,9 +116,9 @@ def test_classify_is_pure_and_offline(schema, monkeypatch) -> None:
     monkeypatch.setattr(socket, "socket", blocked)
     comments = [(I, "what happens when I call?"), (V, None)]
     before = copy.deepcopy(comments)
-    out = classify(comments, schema, cache_path="unused.json", use_llm=True)
+    out = classify(comments, schema)
     assert comments == before
-    assert all(o["method"] == "keywords" for o in out)
+    assert all(set(o) == {"topic", "kind"} for o in out)
 
 
 def test_topics_and_kinds_are_from_fixed_lists(sample_classified, schema) -> None:
@@ -134,7 +134,8 @@ def test_board_counts_add_up(sample_classified, schema) -> None:
     assert list(b) == ["Keep", "Fix", "Add"]
     total = sum(x["n"] for col in b.values() for x in col)
     assert total == int((sample_classified["kind"] != "empty").sum())
-    assert {"topic": "What happens when you call", "n": 2} in b["Add"]
+    add = {x["topic"]: x for x in b["Add"]}
+    assert add["What happens when you call"]["n"] == 2
     for col in b.values():
         assert [x["n"] for x in col] == sorted((x["n"] for x in col), reverse=True)
 
@@ -190,3 +191,87 @@ def test_sample_is_too_few_for_f_and_j(sample_df, sample_classified, schema) -> 
                          load_decisions(), schema)
     assert result_of(runs, "F")["result"] == "too_few"   # 5 low raters
     assert result_of(runs, "J")["result"] in ("too_few", "finding", "no_finding")
+
+
+# ----- redaction --------------------------------------------------------------
+
+@pytest.mark.parametrize("text,expected", [
+    ("write to jo.smith@school.edu", "write to [EMAIL]"),
+    ("(301) 555-1234 or +1 240.555.9876", "[PHONE] or [PHONE]"),
+    ("Ms. Lopez and Dr Kim were great", "[NAME] and [NAME] were great"),
+    ("thank you Maria!", "thank you [NAME]!"),
+    ("me llamo Ana", "me llamo [NAME]"),
+    ("call 988, not 911", "call 988, not 911"),
+    ("Thank you EveryMind", "Thank you EveryMind"),
+    ("thank you so much", "thank you so much"),
+])
+def test_redact(text, expected) -> None:
+    from pipeline.themes import redact
+    assert redact(text) == expected
+
+
+# ----- board lists and the all-comments table ---------------------------------
+
+def test_comment_table_has_every_non_empty_comment_once(sample_classified, schema) -> None:
+    table = comment_table(sample_classified, schema)
+    said = sample_classified[sample_classified["kind"] != "empty"]
+    assert len(table) == len(said) == 32
+    assert list(table.columns) == ["column", "topic", "comment", "month"]
+    assert sorted(table["comment"]) == sorted(" ".join(str(x).split()) for x in said["text"])
+    kind_of = {"Keep": "praise", "Fix": "suggestion", "Add": "open_question"}
+    merged = table.merge(said.assign(comment=said["text"].map(lambda x: " ".join(str(x).split()))),
+                         on="comment")
+    assert (merged["column"].map(kind_of) == merged["kind"]).all()
+    assert (merged["topic_x"] == merged["topic_y"]).all()
+
+
+def test_board_lists_every_comment_in_every_column(sample_classified, schema) -> None:
+    b = board(sample_classified, schema)
+    for items in b.values():
+        for x in items:
+            assert x["n"] == len(x["comments"]) > 0
+    assert sum(x["n"] for items in b.values() for x in items) == 32
+    keep = {x["topic"]: x for x in b["Keep"]}
+    assert {"comment": "It was awesome!", "month": "2025-10"} in keep["Positive/no change"]["comments"]
+
+
+def test_sample_topic_list_newest_first(sample_classified, schema) -> None:
+    add = {x["topic"]: x for x in board(sample_classified, schema)["Add"]}
+    assert add["More detail/content"]["comments"] == [
+        {"comment": "How many calls they get a year versus the amount that they should get?",
+         "month": "2026-10"},
+        {"comment": "how many people use it", "month": "2026-05"}]
+
+
+def dated(texts: list[str], times: list[Any]) -> pd.DataFrame:
+    return pd.DataFrame({I: texts, "start_time": pd.to_datetime(times)})
+
+
+def test_order_newest_first_ties_file_order_blank_last(schema) -> None:
+    texts = [f"how many people call in month {i}?" for i in range(5)]
+    df = dated(texts, ["2026-01-01", "2026-05-01", None, "2026-03-01", "2026-05-01"])
+    table = comment_table(classify_df(df, schema), schema)
+    assert list(table["comment"]) == [texts[1], texts[4], texts[3], texts[0], texts[2]]
+    assert list(table["month"]) == ["2026-05", "2026-05", "2026-03", "2026-01", ""]
+    assert comment_table(classify_df(df, schema), schema).equals(table)
+
+
+def test_comments_redacted_but_not_shortened(schema) -> None:
+    long_q = "how many people call " + "and then what " * 30 + "?"
+    df = dated(["Can Ms. Lopez email me at a@b.org or 301-555-1234?", long_q],
+               ["2026-02-01", "2026-01-01"])
+    table = comment_table(classify_df(df, schema), schema)
+    assert "Can [NAME] email me at [EMAIL] or [PHONE]?" in set(table["comment"])
+    assert " ".join(long_q.split()) in set(table["comment"])
+
+
+def test_empty_answers_left_out(schema) -> None:
+    df = dated(["nothing", "none", None, "how many calls?"], ["2026-01-01"] * 4)
+    assert list(comment_table(classify_df(df, schema), schema)["comment"]) == ["how many calls?"]
+
+
+def test_works_without_start_time_column(schema) -> None:
+    df = pd.DataFrame({I: ["how many calls?", "what happens next?"]})
+    table = comment_table(classify_df(df, schema), schema)
+    assert list(table["comment"]) == ["how many calls?", "what happens next?"]
+    assert set(table["month"]) == {""}

@@ -13,7 +13,9 @@ Question: How can EveryMind use its 988 training feedback data to develop an act
 * automated pipeline may be the best choice cuz they want the thing to be continuous. insights should be reproduciable 
 * actionable! ? so artifact should suggest actions
 * may include that the survey structure should be changed in the first place? post review may ignore bias in the first place
-* limit: AI api...
+
+## limitation 
+* AI usage on milestone 5: if fund allows, can give specific feedback and summary. 
 
 ## notes about dataset
 * the dataset is people's feedback on EveryMind's training

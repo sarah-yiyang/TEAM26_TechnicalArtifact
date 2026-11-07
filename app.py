@@ -20,13 +20,13 @@ from pipeline.metrics import compute, drop_flagged
 from pipeline.quality import add_flags, flag_summary
 from pipeline.recommend import CHECK_METRIC, DECISIONS_PATH, load_decisions, run_checks, validate_decisions
 from pipeline.segments import NOT_RECORDED, compare
-from pipeline.themes import board, check_input, classify_df
+from pipeline.themes import board, check_input, classify_df, comment_table
 from pipeline.trends import alerts, monthly
 
 SAMPLE_PATH = ROOT / "data" / "sample_30rows.xlsx"
 PREVIEW_ROWS = 20
 # Widget keys whose values must survive while their section is hidden.
-PERSISTED_KEYS = ("exclude_flagged", "m3_metric", "m3_by", "m4_owner")
+PERSISTED_KEYS = ("exclude_flagged", "m3_metric", "m3_by", "m4_owner", "m5_col", "m5_topic")
 BAR_COLOR = "#2a78d6"
 ACCENT_COLOR = "#eb6834"
 MUTED_COLOR = "rgba(128,128,128,0.6)"
@@ -766,8 +766,16 @@ BOARD_HELP = {"Keep": "What people valued or praised.",
               "Add": "Questions the training left open."}
 
 
-def _show_board(classified: pd.DataFrame) -> None:
-    """Section 5: Keep / Fix / Add topic counts. No quotes are shown."""
+COMMENT_COLS = {
+    "column": st.column_config.TextColumn("Column", width="small"),
+    "topic": st.column_config.TextColumn("Topic", width="medium"),
+    "comment": st.column_config.TextColumn("Comment", width="large"),
+    "month": st.column_config.TextColumn("Month", width="small"),
+}
+
+
+def _show_board(classified: pd.DataFrame, schema: dict[str, Any]) -> None:
+    """Section 5: Keep / Fix / Add, topic by topic; every topic opens to its comments."""
     if classified.empty:
         st.info("This file has no comment questions, so there is nothing to sort.")
         return
@@ -775,17 +783,39 @@ def _show_board(classified: pd.DataFrame) -> None:
     st.caption(f"{said} written comments sorted (n = {len(classified)} answer boxes; "
                f"{len(classified) - said} were blank or said 'nothing'). "
                "Method: keyword rules from config/schema.yaml, so topics are rough. "
-               "Comments that match no rule are counted under Other.")
+               "Comments that match no rule are counted under Other. Names, emails and "
+               "phone numbers are hidden. Newest comments first.")
     cols = st.columns(3)
-    for col, (name, items) in zip(cols, board(classified, load_schema()).items()):
+    for col, (name, items) in zip(cols, board(classified, schema).items()):
         with col:
             st.subheader(f"{name} · n = {sum(x['n'] for x in items)}")
             st.caption(BOARD_HELP.get(name, ""))
             if not items:
                 st.write("No comments.")
-                continue
-            table = pd.DataFrame(items).rename(columns={"topic": "Topic", "n": "Comments"})
-            st.dataframe(table, hide_index=True, width="stretch")
+            for x in items:
+                with st.expander(f"{x['topic']} · {x['n']}"):
+                    st.dataframe(pd.DataFrame(x["comments"]), hide_index=True,
+                                 width="stretch", column_config=COMMENT_COLS)
+
+
+def _show_all_comments(classified: pd.DataFrame, schema: dict[str, Any]) -> None:
+    """Every comment in one table, filtered by board column and topic."""
+    table = comment_table(classified, schema)
+    if table.empty:
+        return
+    st.subheader("All comments")
+    f1, f2 = st.columns(2)
+    column = f1.selectbox("Column", ["All", *board(classified, schema)], key="m5_col")
+    shown = table if column == "All" else table[table["column"] == column]
+    topics = ["All", *sorted(shown["topic"].unique())]
+    if st.session_state.get("m5_topic") not in topics:
+        st.session_state["m5_topic"] = "All"
+    topic = f2.selectbox("Topic", topics, key="m5_topic")
+    if topic != "All":
+        shown = shown[shown["topic"] == topic]
+    st.caption(f"Showing {len(shown)} of {len(table)} comments. "
+               "Hover over a comment to read all of it.")
+    st.dataframe(shown, hide_index=True, width="stretch", column_config=COMMENT_COLS)
 
 
 # ----- page -----------------------------------------------------------
@@ -854,7 +884,10 @@ def main() -> None:
         _show_comparisons(df)
     elif pick == 5:
         _flag_note(exclude)
-        _show_board(classify_df(df, load_schema()))
+        schema = load_schema()
+        classified = classify_df(df, schema)
+        _show_board(classified, schema)
+        _show_all_comments(classified, schema)
     elif pick == 4:
         _flag_note(exclude)
         schema = load_schema()
