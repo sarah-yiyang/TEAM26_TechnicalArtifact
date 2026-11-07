@@ -342,3 +342,123 @@ checks:
       text: >
         {question_n} of {comment_n} comments ask a question the training may
         not have answered, under the {threshold} line.
+
+# ---------------------------------------------------------------------
+# Program Brief (section 6, pipeline/summarize.py). Rule-based, no AI.
+# {placeholders} are filled only from evidence; every number in the
+# brief is checked against the data before it can be copied.
+# Leave targets empty until EveryMind sets them; tiles then show
+# direction only. Example:  targets: {likely_call.pct_high: 0.60}
+# ---------------------------------------------------------------------
+brief:
+  title: "988 awareness training: program brief"
+  audiences:
+    internal: Internal (all findings)
+    funder: Funder / report
+  intro: >
+    Based on {rows} survey responses from {first_month} to {last_month}.
+    Rushed or patterned responses are {flag_state}.
+  intro_no_months: >
+    Based on {rows} survey responses. Rushed or patterned responses are
+    {flag_state}.
+  flag_states: {included: included, excluded: left out}
+  n_label: "n = {n}"
+  headings:
+    bottom_line: Bottom line
+    scorecard: Scorecard
+    priorities: Top priorities
+    watch: Also worth a look
+    reach: Who the training reaches
+    comments: What participants say
+    measurement: Fix the measurement
+    limits: How to read this
+  blurbs:
+    scorecard: One line per training goal. Trend = the latest month against the months before it.
+    priorities: The strongest findings first. Each is an option to consider, not an instruction.
+    watch: Findings with thin evidence, or beyond the top three. Re-check them on the next upload.
+    reach: 'Who took part, and whether any group differs on "{metric_label}".'
+    comments: The most common topics in participants' own words (redacted).
+    measurement: Gaps in the survey itself. Fixing these makes every other number more reliable.
+  bottom_line:
+    knowledge: >
+      Self-reported "{label}" went from {before} before the training to
+      {after} after (n = {n}).
+    intent: >
+      {value} say they are very likely to call 988 (n = {n}).
+    intent_low_coverage: >
+      {value} say they are very likely to call 988, but only {coverage} of
+      respondents answered that question (n = {n}).
+    gap: "Biggest gap: {text}"
+    declines: "Watch: in {month}, {items} fell compared with earlier months."
+    action: "First step to consider ({owner}): {action}"
+    none: No insight check found a gap to act on in this data.
+    none_strong: >
+      No finding is strong enough to act on yet; {watch_n} with thin evidence
+      are listed under "Also worth a look".
+  scorecard:
+    - {label: Can identify mental health challenges, before: agree_pct.pre_identify, after: agree_pct.post_identify}
+    - {label: Can describe 988 and how it works, before: agree_pct.pre_describe, after: agree_pct.post_describe}
+    - {label: Know when to use 988, before: agree_pct.pre_when, after: agree_pct.post_when, trend: agree_pct.post_when}
+    - {label: Very likely to call 988, after: likely_call.pct_high, trend: likely_call.pct_high, coverage: likely_call.coverage}
+    - {label: Would recommend (NPS), after: nps, trend: nps, format: score}
+    - {label: Liked the delivery, after: delivery_agree_pct, trend: delivery_agree_pct}
+  tile:
+    before_after: "{before} before, {after} after"
+    coverage: "answered by {coverage} of respondents"
+    score_range: "likely range {low} to {high}"
+    trend_up: "up {change} in {last_month} vs earlier months"
+    trend_down: "down {change} in {last_month} vs earlier months"
+    trend_steady: "steady in {last_month} vs earlier months"
+    trend_none: not enough months for a trend
+    not_collected: not collected
+    too_few: too few responses
+    target_met: "target {target}: met"
+    target_missed: "target {target}: not yet met"
+    points: "{x} points"
+  targets: {}
+  card:
+    evidence: "{n_label}, {confidence} evidence"
+    action_label: "Option to consider:"
+    owner_label: "Responsible area:"
+    success_label: "Success looks like:"
+  reach:
+    metric_label: know when to use 988 (agree)
+    dims:
+      - {by: role_primary, label: Role}
+      - {by: language, label: Language}
+      - {by: county, label: County}
+    largest: "Largest group: {group}, {share} of respondents ({n} of {total})."
+    gap: "{group} is at {value} vs {overall} overall (n = {n})."
+    no_gap: "No group differs from the overall {overall} by {threshold} or more."
+    too_few: "Too few responses to judge: {groups}."
+    not_recorded: "{n} responses have no {label} recorded."
+    not_collected: "{label} was not collected in this survey."
+  comments:
+    coverage: >
+      Based on the {sorted_n} of {total_n} comments ({coverage}) that matched
+      a topic; the rest are listed as "Other" on the comment board.
+    topic: '{topic} ({n}): "{quote}"'
+    columns:
+      Keep: "Keep: what people valued"
+      Fix: "Fix: what people would change"
+      Add: "Add: questions the training left open"
+    column_none: No comments matched a topic here.
+    none: No comments to summarize.
+  measurement:
+    coverage: >
+      "Very likely to call 988" was answered by only {coverage} of
+      respondents ({n} of {rows}), so the outcome that matters most rests on
+      a minority of people.
+    coverage_action: >
+      Consider making this question required, or moving it earlier in the
+      survey.
+    none: No gaps found in how the survey is measuring.
+  limits:
+    - >
+      Before-and-after ratings are given on the same survey after training,
+      so they show how people see their own change, not measured impact.
+    - Comments come only from people who chose to write one.
+    - There is no comparison group of people who did not attend.
+    - Groups with fewer than {min_n} responses are not judged.
+  funder_hide_levers: [presenter_coaching]
+  funder_hide_checks: [H]

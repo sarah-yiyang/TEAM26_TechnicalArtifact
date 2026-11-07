@@ -6,7 +6,6 @@ functions and shows what they return.
 from __future__ import annotations
 
 import io
-import os
 from typing import Any
 
 import pandas as pd
@@ -21,14 +20,15 @@ from pipeline.metrics import compute, drop_flagged
 from pipeline.quality import add_flags, flag_summary
 from pipeline.recommend import CHECK_METRIC, DECISIONS_PATH, load_decisions, run_checks, validate_decisions
 from pipeline.segments import NOT_RECORDED, compare
-from pipeline.summarize import make_client, method_note, numbers_ok, sentences, write_summary
+from pipeline.summarize import AUDIENCES, build_brief, to_text
 from pipeline.themes import board, check_input, classify_df, comment_table
 from pipeline.trends import alerts, monthly
 
 SAMPLE_PATH = ROOT / "data" / "sample_30rows.xlsx"
 PREVIEW_ROWS = 20
 # Widget keys whose values must survive while their section is hidden.
-PERSISTED_KEYS = ("exclude_flagged", "m3_metric", "m3_by", "m4_owner", "m5_col", "m5_topic")
+PERSISTED_KEYS = ("exclude_flagged", "m3_metric", "m3_by", "m4_owner", "m5_col", "m5_topic",
+                  "m6_audience")
 BAR_COLOR = "#2a78d6"
 ACCENT_COLOR = "#eb6834"
 MUTED_COLOR = "rgba(128,128,128,0.6)"
@@ -61,7 +61,7 @@ SECTIONS: dict[int, tuple[str, str]] = {
     3: ("Comparisons and trends", "Groups, sessions, and months side by side."),
     4: ("What to act on", "Insight checks run on this data, and what they found."),
     5: ("Comment board", "What people said they valued, would fix, or want added."),
-    6: ("Summary", "A copy-ready write-up of the findings."),
+    6: ("Program brief", "One page: is it working, for whom, what to do next, and how we'll know."),
 }
 # Make the three heading levels easy to tell apart: section > subsection > label.
 HEADING_CSS = """<style>
@@ -131,21 +131,6 @@ def _load_decisions(path: str) -> dict[str, Any]:
 def _read_decisions(path: str, mtime: float) -> dict[str, Any]:  # noqa: ARG001
     """Cached read; ``mtime`` is part of the cache key, so saving the file reloads it."""
     return load_decisions(path)
-
-
-@st.cache_resource
-def _summary_cache() -> dict[str, str]:
-    """AI-reworded cards, kept while the server runs so no card is sent twice."""
-    return {}
-
-
-def _groq_key() -> str | None:
-    """GROQ_API_KEY from Streamlit secrets or the environment; never stored in files."""
-    try:
-        key = st.secrets.get("GROQ_API_KEY")
-    except Exception:  # no secrets.toml
-        key = None
-    return key or os.environ.get("GROQ_API_KEY")
 
 
 def _insight_cards(df: pd.DataFrame, result: dict[str, Any], metrics: dict[str, Any],
@@ -791,59 +776,116 @@ def _show_insights(cards: list[dict[str, Any]], runs: list[dict[str, Any]],
         st.warning("decisions.yaml needs attention:\n" + "\n".join(f"- {p}" for p in problems))
 
 
-# ----- M6: summary ---------------------------------------------------------
+# ----- M6: program brief ----------------------------------------------------
 
-def _show_summary(cards: list[dict[str, Any]], metrics: dict[str, Any],
-                  schema: dict[str, Any], decisions: dict[str, Any]) -> None:
-    """Section 6: one readable card per finding, tick which to include, then copy."""
-    client = make_client(_groq_key())
-    allowed = decisions.get("allowed_literals")
-    with st.spinner("Writing summary..."):
-        sents, mismatches = sentences(cards, schema, client=client, cache=_summary_cache(),
-                                      allowed=allowed)
-    labels = schema["ai"]["summary"]
-    st.caption("How it was worded: " + method_note(cards, client, mismatches, schema))
-    if not numbers_ok(mismatches):
-        st.warning("The AI wording for some findings used numbers that are not in the "
-                   "evidence, so those findings use the rule text instead.")
-    if not cards:
-        st.info(labels["none_text"])
-        return
+TREND_STYLE = {"up": ("green", "▲"), "down": ("red", "▼"), "steady": ("gray", "■")}
 
-    st.subheader(f"{labels['findings_heading']} ({len(cards)})")
-    st.caption("Untick a finding to leave it out of the text to copy below.")
-    fell_back = {m["id"]: m["reason"] for m in mismatches}
-    picked = []
-    for i, c in enumerate(cards, 1):
-        with st.container(border=True):
-            top, tick = st.columns([6, 1])
-            top.caption(f"Finding {i} · check {c['id']}")
-            if tick.checkbox("Include", value=True, key=f"m6_inc_{c['id']}"):
-                picked.append(c)
-            st.markdown(f"#### {c['title']}")
-            st.write(sents.get(c["id"], c["text"]))
-            st.markdown(" ".join([_tag(f"n = {c['n']}", "gray"),
-                                  _tag(f"{c['confidence']} evidence", "blue"),
-                                  _tag(f"{c['priority']} priority", "orange")]))
-            if c.get("decision"):
-                st.caption(labels['decision_label'].rstrip(":"))
-                st.write(c['decision'])
-            if c.get("action"):
-                st.caption(labels['action_label'].rstrip(":"))
-                st.write(c['action'])
-            if c["id"] in fell_back:
-                st.caption(f"Rule text shown: {fell_back[c['id']]}.")
 
-    text, _, _ = write_summary(picked, schema, rows=(metrics.get("rows") or {}).get("value"),
-                               allowed=allowed, reworded=sents)
-    st.subheader("Copy-ready text")
-    st.caption(f"{len(picked)} of {len(cards)} findings included. Paste into an email or report.")
-    left, right = st.columns([1, 1])
+def _brief_card(c: dict[str, Any], labels: dict[str, str], compact: bool = False) -> None:
+    """One priority: what we found, the option, who, and what success looks like."""
+    with st.container(border=True):
+        tags = [_tag(c["owner_role"], "blue"), _tag(c["evidence_text"], "gray")]
+        if not compact:
+            tags.append(_tag(f"{c['priority']} priority", "orange"))
+        st.markdown(" ".join(tags))
+        st.markdown(f"##### {c['title']}")
+        st.write(c["text"])
+        for key, label in (("action", "action_label"), ("success_measure", "success_label")):
+            if c.get(key):
+                st.caption(labels.get(label, "").rstrip(":"))
+                st.write(c[key])
+
+
+def _brief_export(brief: dict[str, Any]) -> None:
+    """Copy / download the brief, with the number check result."""
+    text, ok, stray = to_text(brief)
+    left, right = st.columns(2)
     with left.popover("Show text to copy", icon=":material/content_copy:", width="stretch"):
-        st.caption("Use the copy button in the top-right corner of the box.")
-        st.code(text, language=None, wrap_lines=True)
-    right.download_button("Download as .txt", text, file_name="988_summary.txt",
+        st.caption("Use the copy button in the top-right corner of the box. "
+                   "Paste into an email, memo or report.")
+        st.code(text, language="markdown", wrap_lines=True)
+    right.download_button("Download as .md", text, file_name=f"988_brief_{brief['audience']}.md",
                           icon=":material/download:", width="stretch")
+    if ok:
+        st.caption("✓ Every number in this brief was traced to the data or the settings file.")
+    else:
+        st.warning("These numbers could not be traced to the data: " + ", ".join(stray))
+
+
+def _show_brief(brief: dict[str, Any]) -> None:
+    """Section 6: the Program Brief, block by block, in the order a reader needs it."""
+    h, blurbs, labels = brief["headings"], brief["blurbs"], brief["labels"]
+    if brief["problems"]:
+        st.warning("decisions.yaml (brief:) needs attention:\n"
+                   + "\n".join(f"- {p}" for p in brief["problems"]))
+    _brief_export(brief)
+    st.markdown(f"### {brief['title']}")
+    if brief.get("intro"):
+        st.caption(brief["intro"])
+
+    for block in brief["blocks"]:
+        if block == "watch" and not brief["watch"]:
+            continue
+        if block == "watch":
+            with st.expander(f"{h['watch']} ({len(brief['watch'])})"):
+                st.caption(blurbs.get("watch", ""))
+                for c in brief["watch"]:
+                    _brief_card(c, labels, compact=True)
+            continue
+        st.subheader(h[block])
+        if blurbs.get(block):
+            st.caption(blurbs[block])
+        if block == "bottom_line":
+            with st.container(border=True):
+                for line in brief["bottom_line"]:
+                    st.markdown(line)
+        elif block == "scorecard":
+            tiles = brief["scorecard"]
+            for row in range(0, len(tiles), 3):
+                for col, t in zip(st.columns(3), tiles[row:row + 3]):
+                    with col.container(border=True):
+                        st.metric(t["label"], t["value_text"])
+                        if t.get("n_text"):
+                            st.caption(" · ".join([t["n_text"], *t["notes"]]))
+                        if t.get("trend_text"):
+                            color, mark = TREND_STYLE.get(t["trend"], ("gray", "·"))
+                            st.markdown(f":{color}[{mark} {t['trend_text']}]")
+        elif block == "priorities":
+            if not brief["priorities"]:
+                st.info(brief["bottom_line"][-1] if brief["bottom_line"] else "")
+            for c in brief["priorities"]:
+                _brief_card(c, labels)
+        elif block == "reach":
+            cols = st.columns(max(len(brief["reach"]), 1))
+            for col, r in zip(cols, brief["reach"]):
+                with col.container(border=True):
+                    st.markdown(f"###### {r['label']}")
+                    for line in r["lines"]:
+                        st.markdown(f"- {line}")
+        elif block == "comments":
+            cm = brief["comments"] or {}
+            if cm.get("none"):
+                st.info(cm["none"])
+                continue
+            st.caption(cm.get("coverage") or "")
+            for col, c in zip(st.columns(max(len(cm["columns"]), 1)), cm["columns"]):
+                with col.container(border=True):
+                    st.markdown(f"###### {c['heading']}")
+                    if c["none"]:
+                        st.caption(c["none"])
+                    for t in c["topics"]:
+                        st.markdown(f"{t['topic']} · n = {t['n']}")
+                        st.caption(f"“{t['quote']}”")
+        elif block == "measurement":
+            if not brief["measurement"]:
+                st.success(f"✓ {brief['measurement_none']}")
+            for m in brief["measurement"]:
+                with st.container(border=True):
+                    st.write(m["text"])
+                    if m.get("action"):
+                        st.caption(m["action"])
+        elif block == "limits":
+            st.markdown("\n".join(f"- {x}" for x in brief["limits"]))
 
 
 # ----- M5: comment board -------------------------------------------------
@@ -912,7 +954,7 @@ def main() -> None:
     st.set_page_config(page_title="988 Training Insights", layout="wide")
     st.markdown(HEADING_CSS, unsafe_allow_html=True)
     # Widgets in hidden sections are not drawn; re-store their values so they survive.
-    for key in [*PERSISTED_KEYS, *(k for k in st.session_state if str(k).startswith("m6_inc_"))]:
+    for key in PERSISTED_KEYS:
         if key in st.session_state:
             st.session_state[key] = st.session_state[key]
 
@@ -985,7 +1027,21 @@ def main() -> None:
         _flag_note(exclude)
         schema = load_schema()
         decisions = _load_decisions(str(DECISIONS_PATH))
+        names = (decisions.get("brief") or {}).get("audiences") or {}
+        audience = st.segmented_control(
+            "Version", list(AUDIENCES), key="m6_audience", default=AUDIENCES[0],
+            format_func=lambda a: names.get(a, a)) or AUDIENCES[0]
+        st.caption("Internal shows every finding. Funder / report shows outcomes, reach and "
+                   "limits, and never names a session or presenter item.")
         cards, _ = _insight_cards(df, result, metrics, schema, decisions)
-        _show_summary(cards, metrics, schema, decisions)
+        brief = build_brief(
+            metrics, cards,
+            {d["by"]: compare(df, d["by"], CHECK_METRIC)
+             for d in ((decisions.get("brief") or {}).get("reach") or {}).get("dims") or []},
+            {t["trend"]: monthly(df, t["trend"])
+             for t in (decisions.get("brief") or {}).get("scorecard") or [] if t.get("trend")},
+            board(classify_df(df, schema), schema), decisions,
+            audience=audience, excluded_flagged=exclude)
+        _show_brief(brief)
 
 main()
