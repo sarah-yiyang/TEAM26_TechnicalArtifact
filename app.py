@@ -6,6 +6,7 @@ functions and shows what they return.
 from __future__ import annotations
 
 import io
+import os
 from typing import Any
 
 import pandas as pd
@@ -20,6 +21,7 @@ from pipeline.metrics import compute, drop_flagged
 from pipeline.quality import add_flags, flag_summary
 from pipeline.recommend import CHECK_METRIC, DECISIONS_PATH, load_decisions, run_checks, validate_decisions
 from pipeline.segments import NOT_RECORDED, compare
+from pipeline.summarize import make_client, method_note, numbers_ok, sentences, write_summary
 from pipeline.themes import board, check_input, classify_df, comment_table
 from pipeline.trends import alerts, monthly
 
@@ -52,9 +54,7 @@ KNOWLEDGE_LABELS = {"identify": "Can identify mental health challenges",
                     "describe": "Can describe 988 and how it works",
                     "when": "Knows when to use 988"}
 
-LATER_MILESTONES: list[tuple[int, str, str]] = [
-    (6, "Summary", "A copy-ready written summary of the findings."),
-]
+LATER_MILESTONES: list[tuple[int, str, str]] = []
 SECTIONS: dict[int, tuple[str, str]] = {
     1: ("Data check", "What was loaded, how columns were matched, and what was fixed."),
     2: ("Headline results", "Overall numbers for everyone in the data."),
@@ -122,10 +122,43 @@ def _load_sample(path: str) -> dict[str, Any]:
     return _run_pipeline([path])
 
 
-@st.cache_data
 def _load_decisions(path: str) -> dict[str, Any]:
-    """Read config/decisions.yaml once per session."""
+    """Read config/decisions.yaml; re-read whenever the file is saved."""
+    return _read_decisions(path, DECISIONS_PATH.stat().st_mtime)
+
+
+@st.cache_data
+def _read_decisions(path: str, mtime: float) -> dict[str, Any]:  # noqa: ARG001
+    """Cached read; ``mtime`` is part of the cache key, so saving the file reloads it."""
     return load_decisions(path)
+
+
+@st.cache_resource
+def _summary_cache() -> dict[str, str]:
+    """AI-reworded cards, kept while the server runs so no card is sent twice."""
+    return {}
+
+
+def _groq_key() -> str | None:
+    """GROQ_API_KEY from Streamlit secrets or the environment; never stored in files."""
+    try:
+        key = st.secrets.get("GROQ_API_KEY")
+    except Exception:  # no secrets.toml
+        key = None
+    return key or os.environ.get("GROQ_API_KEY")
+
+
+def _insight_cards(df: pd.DataFrame, result: dict[str, Any], metrics: dict[str, Any],
+                   schema: dict[str, Any], decisions: dict[str, Any]
+                   ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Run the insight checks (shared by sections 4 and 6)."""
+    themes = check_input(classify_df(df, schema), df, schema)
+    return run_checks(
+        {"headline": metrics, "all": result["metrics"][False],
+         "unflagged": result["metrics"][True]},
+        {"session_id": compare(df, "session_id", CHECK_METRIC), "metric": CHECK_METRIC},
+        {"monthly": monthly(df, CHECK_METRIC), "metric": CHECK_METRIC, "alerts": alerts(df)},
+        themes, decisions)
 
 
 # ----- display helpers ------------------------------------------------
@@ -344,7 +377,7 @@ def _flag_toggle(flags: dict[str, dict[str, int]]) -> bool:
         f"Leave out the {any_['flagged']} flagged responses (of {any_['n']:,})",
         key="exclude_flagged",
     )
-    st.caption("Flagged rows are never deleted. \"Could not check\" rows are kept. "
+    st.caption("Flagged rows are never deleted. "
                "See 'Rushed or doubtful answers' below for what was flagged.")
     return exclude
 
@@ -356,8 +389,7 @@ def _show_flags(flags: dict[str, dict[str, int]]) -> None:
             ("Same answer to all 9 rating questions", "flag_straightline"),
             ("Lowest rating on every 'after' item but would recommend (8+)", "flag_reversed")]
     st.dataframe(
-        pd.DataFrame([{"Check": label, "Flagged": flags[c]["flagged"],
-                       "Could not check (blank answers)": flags[c]["unknown"]}
+        pd.DataFrame([{"Check": label, "Flagged": flags[c]["flagged"]}
                       for label, c in rows]),
         hide_index=True, width="stretch",
     )
@@ -693,7 +725,7 @@ def _show_card(c: dict[str, Any]) -> None:
         st.markdown("\n".join([
             f"- Check run: {c['title']}",
             f"- What we found: {c['text']}",
-            f"- How we'd know it worked: {c['success_measure'] or 'not set up'}",
+            f"- Success looks like: {c['success_measure'] or 'not set up'}",
         ]))
 
         st.markdown("###### 3. Details")
@@ -723,7 +755,7 @@ def _show_insights(cards: list[dict[str, Any]], runs: list[dict[str, Any]],
                                        if c["owner_role"] == o), o))
     shown: set[str] = set()
     if cards:
-        pick = st.selectbox("Show cards for area", ["All areas"] + owners, index=None,
+        pick = st.selectbox("Show recommendation cards for", ["All areas"] + owners, index=None,
                             placeholder="Choose an area", key="m4_owner")
         if pick is None:
             nc, na = len(cards), len(owners)
@@ -757,6 +789,61 @@ def _show_insights(cards: list[dict[str, Any]], runs: list[dict[str, Any]],
                                             for g in x["config_gaps"]]))
     if problems:
         st.warning("decisions.yaml needs attention:\n" + "\n".join(f"- {p}" for p in problems))
+
+
+# ----- M6: summary ---------------------------------------------------------
+
+def _show_summary(cards: list[dict[str, Any]], metrics: dict[str, Any],
+                  schema: dict[str, Any], decisions: dict[str, Any]) -> None:
+    """Section 6: one readable card per finding, tick which to include, then copy."""
+    client = make_client(_groq_key())
+    allowed = decisions.get("allowed_literals")
+    with st.spinner("Writing summary..."):
+        sents, mismatches = sentences(cards, schema, client=client, cache=_summary_cache(),
+                                      allowed=allowed)
+    labels = schema["ai"]["summary"]
+    st.caption("How it was worded: " + method_note(cards, client, mismatches, schema))
+    if not numbers_ok(mismatches):
+        st.warning("The AI wording for some findings used numbers that are not in the "
+                   "evidence, so those findings use the rule text instead.")
+    if not cards:
+        st.info(labels["none_text"])
+        return
+
+    st.subheader(f"{labels['findings_heading']} ({len(cards)})")
+    st.caption("Untick a finding to leave it out of the text to copy below.")
+    fell_back = {m["id"]: m["reason"] for m in mismatches}
+    picked = []
+    for i, c in enumerate(cards, 1):
+        with st.container(border=True):
+            top, tick = st.columns([6, 1])
+            top.caption(f"Finding {i} · check {c['id']}")
+            if tick.checkbox("Include", value=True, key=f"m6_inc_{c['id']}"):
+                picked.append(c)
+            st.markdown(f"#### {c['title']}")
+            st.write(sents.get(c["id"], c["text"]))
+            st.markdown(" ".join([_tag(f"n = {c['n']}", "gray"),
+                                  _tag(f"{c['confidence']} evidence", "blue"),
+                                  _tag(f"{c['priority']} priority", "orange")]))
+            if c.get("decision"):
+                st.caption(labels['decision_label'].rstrip(":"))
+                st.write(c['decision'])
+            if c.get("action"):
+                st.caption(labels['action_label'].rstrip(":"))
+                st.write(c['action'])
+            if c["id"] in fell_back:
+                st.caption(f"Rule text shown: {fell_back[c['id']]}.")
+
+    text, _, _ = write_summary(picked, schema, rows=(metrics.get("rows") or {}).get("value"),
+                               allowed=allowed, reworded=sents)
+    st.subheader("Copy-ready text")
+    st.caption(f"{len(picked)} of {len(cards)} findings included. Paste into an email or report.")
+    left, right = st.columns([1, 1])
+    with left.popover("Show text to copy", icon=":material/content_copy:", width="stretch"):
+        st.caption("Use the copy button in the top-right corner of the box.")
+        st.code(text, language=None, wrap_lines=True)
+    right.download_button("Download as .txt", text, file_name="988_summary.txt",
+                          icon=":material/download:", width="stretch")
 
 
 # ----- M5: comment board -------------------------------------------------
@@ -825,7 +912,7 @@ def main() -> None:
     st.set_page_config(page_title="988 Training Insights", layout="wide")
     st.markdown(HEADING_CSS, unsafe_allow_html=True)
     # Widgets in hidden sections are not drawn; re-store their values so they survive.
-    for key in PERSISTED_KEYS:
+    for key in [*PERSISTED_KEYS, *(k for k in st.session_state if str(k).startswith("m6_inc_"))]:
         if key in st.session_state:
             st.session_state[key] = st.session_state[key]
 
@@ -891,14 +978,14 @@ def main() -> None:
     elif pick == 4:
         _flag_note(exclude)
         schema = load_schema()
-        themes = check_input(classify_df(df, schema), df, schema)
         decisions = _load_decisions(str(DECISIONS_PATH))
-        cards, runs = run_checks(
-            {"headline": metrics, "all": result["metrics"][False],
-             "unflagged": result["metrics"][True]},
-            {"session_id": compare(df, "session_id", CHECK_METRIC), "metric": CHECK_METRIC},
-            {"monthly": monthly(df, CHECK_METRIC), "metric": CHECK_METRIC, "alerts": alerts(df)},
-            themes, decisions)
+        cards, runs = _insight_cards(df, result, metrics, schema, decisions)
         _show_insights(cards, runs, validate_decisions(decisions))
+    elif pick == 6:
+        _flag_note(exclude)
+        schema = load_schema()
+        decisions = _load_decisions(str(DECISIONS_PATH))
+        cards, _ = _insight_cards(df, result, metrics, schema, decisions)
+        _show_summary(cards, metrics, schema, decisions)
 
 main()

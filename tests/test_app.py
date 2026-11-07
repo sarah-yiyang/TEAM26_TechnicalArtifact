@@ -1,6 +1,8 @@
 """Smoke test for app.py: runs headless with the sample, no network."""
 from __future__ import annotations
 
+from pipeline import load_schema
+
 from streamlit.testing.v1 import AppTest
 
 from pipeline import ROOT
@@ -126,7 +128,7 @@ def test_app_nav_lists_every_section_and_starts_on_data_check() -> None:
     assert at.radio(key="section").options == ["1  Data check", "2  Headline results",
                                                "3  Comparisons and trends", "4  What to act on",
                                                "5  Comment board",
-                                               "6  Summary  · coming soon"]
+                                               "6  Summary"]
     assert [h.value for h in at.header] == ["Data check"]
 
 
@@ -139,11 +141,21 @@ def test_app_shows_only_the_picked_section() -> None:
         assert [h.value for h in at.header] == [title]
 
 
-def test_app_unbuilt_section_shows_placeholder() -> None:
+def test_app_shows_summary_without_key(monkeypatch) -> None:
+    monkeypatch.setattr("pipeline.summarize.make_client", lambda key: None)  # never network
     at = _sample(6)
     assert not at.exception
     assert [h.value for h in at.header] == ["Summary"]
-    assert any("Coming in milestone 6" in m.value for m in at.markdown)
+    assert len(at.code) == 1 and "summary of findings" in at.code[0].value
+    assert any("How it was worded: Rule text" in c.value for c in at.caption)
+    boxes = [b for b in at.checkbox if str(b.key).startswith("m6_inc_")]
+    assert boxes and all(b.value for b in boxes)
+    first = at.subheader[0].value.split("(")[0].strip()
+    assert first == load_schema()["ai"]["summary"]["findings_heading"]
+    boxes[0].uncheck().run(timeout=30)              # untick -> left out of the copy text
+    assert any(f"{len(boxes) - 1} of {len(boxes)} findings included" in c.value
+               for c in at.caption)
+    assert not any("Coming in milestone" in m.value for m in at.markdown)
 
 
 def test_app_shows_comment_board() -> None:

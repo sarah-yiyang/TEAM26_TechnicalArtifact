@@ -41,9 +41,6 @@ idea
 * to explain in business value: staff will save time reading responses. 
 
 lingering changes
-* add a nav bar
-
-* reorganize layout to emphasize the 3 features
 * you can't really tell difference after a set of new stuff came in.  need a comparison mode: compare to prev training results. program input: same dataset, input cutoff date. output: comparison of metrics. name current mode cumulative overview.
 
 ## key ai decisions

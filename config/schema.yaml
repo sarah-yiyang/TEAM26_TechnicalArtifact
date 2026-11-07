@@ -367,3 +367,37 @@ themes:
     Keep: praise
     Fix: suggestion
     Add: open_question
+
+# ---------------------------------------------------------------------
+# AI wording for the copy-ready summary (pipeline/summarize.py only).
+# The model only rewords each finding card's rule text into one plain
+# sentence. It may not add numbers: any number not in the card's
+# evidence -> that card keeps its rule text. Wording below is the only
+# prompt text; nothing is hardcoded in Python.
+# Token budget: only finding cards are sent, each as title + text +
+# action (redacted), all uncached cards in ONE call, and every reworded
+# card is cached by content so it is never sent twice.
+# ---------------------------------------------------------------------
+ai:
+  provider: groq
+  model: qwen/qwen3.8-27b            # fewest tokens of the Groq models tested 2026-11; change here, not in code
+  temperature: 0
+  reasoning_effort: none             # optional; "none" = no hidden reasoning tokens
+  max_tokens_per_card: 60            # output cap = this x cards sent
+  system_prompt: >
+    Rewrite each finding as one short plain-English sentence for nontechnical
+    staff. Use only numbers that appear in its text; add no new numbers, causes
+    or advice. Say "self-reported" changes, never "impact". Reply as JSON:
+    {"<id>": "<sentence>"} with one key per input id.
+  summary:
+    title: "988 training survey: summary of findings"
+    rows_line: "Based on {rows} survey responses."
+    findings_heading: "What we found"
+    none_text: "No insight check found anything to act on in this data."
+    n_label: "n = {n}, {confidence} confidence"
+    action_label: "Action to consider:"
+    decision_label: "Decision:"
+    method_ai: "AI wording (Groq, {model}) for {ai} of {total} findings; rule text for the rest."
+    method_rule: "Rule text from config/decisions.yaml ({why})."
+    why_no_key: "no API key"
+    why_no_cards: "no findings"

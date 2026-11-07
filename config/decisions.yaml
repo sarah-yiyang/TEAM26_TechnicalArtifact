@@ -13,7 +13,7 @@
 # - Every check's evidence also has {threshold} and {min_n}.
 # - decision = the yes/no choice the owner makes, phrased as a question.
 # - finding.text = what we found; finding.action = options to consider (not
-#   instructions); finding.success_measure = how we'd know it worked.
+#   instructions); finding.success_measure = what success looks like (a measurable target).
 # - owner_role is an area of responsibility, not a job title, since we don't know
 #   who does what at EveryMind. EveryMind confirms each one (confirmed: false).
 #   Leave a check out entirely if nobody owns it: the card shows "Not assigned".
@@ -117,7 +117,7 @@ checks:
     question: Is delivery more linked to intent to call than knowledge?
     decision: Invest in presenter coaching or peer observation?
     lever: presenter_coaching
-    owner_role: Presenter support
+    owner_role: Training
     confirmed: false
     rule: >
       Flags when the strongest delivery item is linked to willingness to
@@ -179,7 +179,7 @@ checks:
     question: Is a score low only because answers are blank?
     decision: Change the survey layout or make this question required?
     lever: survey_design
-    owner_role: Survey and evaluation
+    owner_role: Survey Design
     confirmed: false
     rule: >
       Flags when a question is left blank in {threshold} or more of a
@@ -206,7 +206,7 @@ checks:
     question: Are unhappy respondents silent about why?
     decision: Add a follow-up question for people who give a low rating?
     lever: survey_design
-    owner_role: Survey and evaluation
+    owner_role: Survey Design
     confirmed: false
     rule: >
       Flags when {threshold} or more of people who gave a low rating leave
@@ -232,7 +232,7 @@ checks:
     question: Are fewer people writing comments?
     decision: Change when or how the survey is given?
     lever: survey_design
-    owner_role: Survey and evaluation
+    owner_role: Survey Design
     confirmed: false
     rule: >
       Flags when the latest month's comment rate is {threshold} or more
@@ -262,7 +262,7 @@ checks:
       the presenter?
     lever: presenter_coaching
     secondary_lever: scheduling_format
-    owner_role: Presenter support
+    owner_role: Training
     confirmed: false
     rule: >
       Flags a session outside the {threshold} limits for its size, i.e.
@@ -294,7 +294,7 @@ checks:
       participants more time?
     lever: funder_reporting
     secondary_lever: survey_design
-    owner_role: Survey and evaluation
+    owner_role: Survey Design
     confirmed: false
     rule: >
       Flags when leaving out flagged answers moves a headline number by
