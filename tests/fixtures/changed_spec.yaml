@@ -1,0 +1,20 @@
+# Recipe for data/test_changed.xlsx (built by scripts/build_changed.py).
+# Starts from data/sample_30rows.xlsx and simulates a revised survey form.
+source_file: data/sample_30rows.xlsx
+output_file: data/test_changed.xlsx
+
+# 1. Reworded question (header text replaced; answers unchanged).
+#    post_when: "use 988" -> "reach out to 988" no longer passes the keyword
+#    rule, so mapping must fall back to fuzzy matching or report it.
+rename:
+  - from: "Please tell us how much you disagree or agree with the statements..I know when to use 988."
+    to: "Please tell us how much you disagree or agree with the statements..I know when to reach out to 988."
+
+# 2. Removed question (column dropped entirely).
+remove:
+  - "How likely are you to call 988 if you or someone else is experiencing a mental health challenge or crisis?"
+
+# 3. New question the schema does not know (answers cycle through the list).
+add:
+  - header: "How did you hear about this training?"
+    values: ["School newsletter", "Coworker", "Social media", "Community event"]
