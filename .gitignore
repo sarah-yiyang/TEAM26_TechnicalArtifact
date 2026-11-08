@@ -12,3 +12,6 @@ BuildFest_EveryMind_Survey_Data_FULL.xlsx
 CLAUDE.md
 # AI answers for real comments (rebuilt on demand)
 data/theme_cache.json
+
+# Python bytecode
+__pycache__/
